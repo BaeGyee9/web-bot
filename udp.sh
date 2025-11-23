@@ -231,7 +231,7 @@ chmod 644 "$CFG" "$USERS"
 
 # ===== Download Web Panel from GitHub =====
 say "${Y}🌐 GitHub မှ Web Panel ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
-curl -fsSL -o /etc/zivpn/web.py "https://raw.githubusercontent.com/BaeGyee9/udp-web-panel/main/templates/web.py"
+curl -fsSL -o /etc/zivpn/web.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py"
 if [ $? -ne 0 ]; then
   echo -e "${R}❌ Web Panel ဒေါင်းလုပ်ဆွဲ၍မရပါ - Fallback သုံးပါမယ်${Z}"
   # Fallback web panel code would go here
@@ -239,7 +239,7 @@ fi
 
 # ===== Download Telegram Bot from GitHub =====
 say "${Y}🤖 GitHub မှ Telegram Bot ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
-curl -fsSL -o /etc/zivpn/bot.py "https://raw.githubusercontent.com/BaeGyee9/udp-web-panel/main/telegram/bot.py"
+curl -fsSL -o /etc/zivpn/bot.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/telegram/bot.py"
 if [ $? -ne 0 ]; then
   echo -e "${R}❌ Telegram Bot ဒေါင်းလုပ်ဆွဲ၍မရပါ - Fallback သုံးပါမယ်${Z}"
   # Fallback bot code would go here
@@ -753,7 +753,7 @@ ufw allow 1:65535/udp >/dev/null 2>&1 || true
 # ufw allow 22/tcp >/dev/null 2>&1 || true
 # ufw allow 5667/udp >/dev/null 2>&1 || true
 # ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-# ufw allow 8080/tcp >/dev/null 2>&1 || true
+# ufw allow 19432/tcp >/dev/null 2>&1 || true
 # ufw allow 8081/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
@@ -779,7 +779,7 @@ systemctl restart zivpn.service
 # ===== Completion Message =====
 IP=$(hostname -I | awk '{print $1}')
 echo -e "\n$LINE\n${G}✅ ZIVPN Enterprise Edition Completed!${Z}"
-echo -e "${C}🌐 WEB PANEL:${Z} ${Y}http://$IP:8080${Z}"
+echo -e "${C}🌐 WEB PANEL:${Z} ${Y}http://$IP:19432${Z}"
 # echo -e "  ${C}Login:${Z} ${Y}$WEB_USER / $WEB_PASS${Z}"
 echo -e "\n${G}🔐 LOGIN CREDENTIALS${Z}"
 echo -e "  ${Y}• Username:${Z} ${Y}$WEB_USER${Z}"
