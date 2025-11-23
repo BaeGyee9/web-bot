@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ZIVPN Enterprise Web Panel - External HTML Template
-Downloaded from: https://raw.githubusercontent.com/BaeGyee9/udp-web-panel/main/templates/web.py
+Downloaded from: https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
@@ -19,7 +19,7 @@ RECENT_SECONDS = 120
 LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
 
 # GitHub Template URL
-HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/udp-web-panel/main/templates/index.html"
+HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
 
 # --- Localization Data ---
 TRANSLATIONS = {
@@ -612,4 +612,5 @@ def update_user():
     return jsonify({"ok": False, "err": "Invalid data"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
+    app.run(host="0.0.0.0", port=web_port)
