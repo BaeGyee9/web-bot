@@ -2,6 +2,7 @@
 """
 ZIVPN Enterprise Web Panel - External HTML Template
 Downloaded from: https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py
+MODIFIED: Added IP Binding Management System
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
@@ -54,7 +55,19 @@ TRANSLATIONS = {
         'dashboard': 'Dashboard', 'system_status': 'System Status',
         'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
         'server_info': 'Server Information', 'vpn_status': 'VPN Status',
-        'active_connections': 'Active Connections'
+        'active_connections': 'Active Connections',
+        # NEW: IP Binding Translations
+        'ip_binding': 'IP Binding', 'ip_binding_management': 'IP Binding Management',
+        'allowed_ips': 'Allowed IPs', 'add_ip': 'Add IP', 'remove_ip': 'Remove IP',
+        'ip_address': 'IP Address', 'device_id': 'Device ID',
+        'ip_binding_enabled': 'IP Binding Enabled', 'enable': 'Enable',
+        'disable': 'Disable', 'current_sessions': 'Current Sessions',
+        'connection_logs': 'Connection Logs', 'bind_ip': 'Bind IP',
+        'unbind_ip': 'Unbind IP', 'auto_bind': 'Auto Bind First IP',
+        'ip_binding_info': 'IP Binding restricts user to specific IP addresses',
+        'active_session': 'Active Session', 'last_activity': 'Last Activity',
+        'connected_at': 'Connected At', 'no_active_sessions': 'No Active Sessions',
+        'view_logs': 'View Logs', 'clear_logs': 'Clear Logs'
     },
     'my': {
         'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
@@ -87,7 +100,19 @@ TRANSLATIONS = {
         'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
         'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
         'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ'
+        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
+        # NEW: IP Binding Translations
+        'ip_binding': 'IP ချိတ်ဆက်ခွင့်', 'ip_binding_management': 'IP ချိတ်ဆက်ခွင့် စီမံခန့်ခွဲမှု',
+        'allowed_ips': 'ခွင့်ပြုထားသော IP များ', 'add_ip': 'IP ထည့်ရန်',
+        'remove_ip': 'IP ဖျက်ရန်', 'ip_address': 'IP လိပ်စာ',
+        'device_id': 'Device ID', 'ip_binding_enabled': 'IP ချိတ်ဆက်ခွင့် ဖွင့်ထားသည်',
+        'enable': 'ဖွင့်မည်', 'disable': 'ပိတ်မည်', 'current_sessions': 'လက်ရှိ Session များ',
+        'connection_logs': 'ချိတ်ဆက်မှု မှတ်တမ်းများ', 'bind_ip': 'IP ချိတ်ဆက်မည်',
+        'unbind_ip': 'IP ချိတ်ဆက်ခွင့် ဖျက်မည်', 'auto_bind': 'ပထမဆုံး IP ကို အလိုအလျောက်ချိတ်ဆက်မည်',
+        'ip_binding_info': 'IP ချိတ်ဆက်ခွင့်သည် အသုံးပြုသူကို သတ်မှတ်ထားသော IP လိပ်စာများတွင်သာ ချိတ်ဆက်ခွင့်ပေးသည်',
+        'active_session': 'တက်ကြွသော Session', 'last_activity': 'နောက်ဆုံးလုပ်ဆောင်မှု',
+        'connected_at': 'ချိတ်ဆက်သည့်အချိန်', 'no_active_sessions': 'တက်ကြွသော Session မရှိပါ',
+        'view_logs': 'မှတ်တမ်းများကြည့်ရန်', 'clear_logs': 'မှတ်တမ်းများရှင်းမည်'
     }
 }
 
@@ -177,7 +202,7 @@ ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
 
-# --- Utility Functions ---
+# --- Enhanced Utility Functions ---
 
 def get_db():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -201,27 +226,82 @@ def write_json_atomic(path, data):
         except: pass
 
 def load_users():
+    """Load users with IP binding information"""
     db = get_db()
     users = db.execute('''
         SELECT username as user, password, expires, port, status, 
                bandwidth_limit, bandwidth_used, speed_limit_up as speed_limit,
-               concurrent_conn
+               concurrent_conn, ip_binding_enabled
         FROM users
     ''').fetchall()
     db.close()
     return [dict(u) for u in users]
 
+def get_user_ip_bindings(username):
+    """Get IP bindings for a specific user"""
+    db = get_db()
+    bindings = db.execute('''
+        SELECT id, allowed_ip, device_id, is_active, created_at
+        FROM user_ip_binding 
+        WHERE username = ? AND is_active = 1
+        ORDER BY created_at DESC
+    ''', (username,)).fetchall()
+    db.close()
+    return [dict(b) for b in bindings]
+
+def get_active_sessions(username=None):
+    """Get active sessions for users"""
+    db = get_db()
+    if username:
+        sessions = db.execute('''
+            SELECT username, client_ip, port, connected_at, last_activity
+            FROM active_sessions 
+            WHERE username = ?
+            ORDER BY last_activity DESC
+        ''', (username,)).fetchall()
+    else:
+        sessions = db.execute('''
+            SELECT username, client_ip, port, connected_at, last_activity
+            FROM active_sessions 
+            ORDER BY last_activity DESC
+        ''').fetchall()
+    db.close()
+    return [dict(s) for s in sessions]
+
+def get_connection_logs(username=None, limit=50):
+    """Get connection logs for users"""
+    db = get_db()
+    if username:
+        logs = db.execute('''
+            SELECT username, client_ip, connected_at, disconnected_at, bytes_sent, bytes_received
+            FROM connection_logs 
+            WHERE username = ?
+            ORDER BY connected_at DESC
+            LIMIT ?
+        ''', (username, limit)).fetchall()
+    else:
+        logs = db.execute('''
+            SELECT username, client_ip, connected_at, disconnected_at, bytes_sent, bytes_received
+            FROM connection_logs 
+            ORDER BY connected_at DESC
+            LIMIT ?
+        ''', (limit,)).fetchall()
+    db.close()
+    return [dict(l) for l in logs]
+
 def save_user(user_data):
+    """Save user with IP binding settings"""
     db = get_db()
     try:
         db.execute('''
             INSERT OR REPLACE INTO users 
-            (username, password, expires, port, status, bandwidth_limit, speed_limit_up, concurrent_conn)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (username, password, expires, port, status, bandwidth_limit, speed_limit_up, concurrent_conn, ip_binding_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             user_data['user'], user_data['password'], user_data.get('expires'),
             user_data.get('port'), 'active', user_data.get('bandwidth_limit', 0),
-            user_data.get('speed_limit', 0), user_data.get('concurrent_conn', 1)
+            user_data.get('speed_limit', 0), user_data.get('concurrent_conn', 1),
+            user_data.get('ip_binding_enabled', 1)  # Default to enabled
         ))
         db.commit()
         
@@ -237,21 +317,73 @@ def save_user(user_data):
         db.close()
 
 def delete_user(username):
+    """Delete user and all related data"""
     db = get_db()
     try:
         db.execute('DELETE FROM users WHERE username = ?', (username,))
         db.execute('DELETE FROM billing WHERE username = ?', (username,))
         db.execute('DELETE FROM bandwidth_logs WHERE username = ?', (username,))
+        db.execute('DELETE FROM user_ip_binding WHERE username = ?', (username,))
+        db.execute('DELETE FROM active_sessions WHERE username = ?', (username,))
+        db.execute('DELETE FROM connection_logs WHERE username = ?', (username,))
         db.commit()
     finally:
         db.close()
 
+def add_ip_binding(username, ip_address, device_id=None):
+    """Add IP binding for user"""
+    db = get_db()
+    try:
+        db.execute('''
+            INSERT OR REPLACE INTO user_ip_binding 
+            (username, allowed_ip, device_id, is_active)
+            VALUES (?, ?, ?, 1)
+        ''', (username, ip_address, device_id))
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error adding IP binding: {e}")
+        return False
+    finally:
+        db.close()
+
+def remove_ip_binding(binding_id):
+    """Remove IP binding by ID"""
+    db = get_db()
+    try:
+        db.execute('DELETE FROM user_ip_binding WHERE id = ?', (binding_id,))
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error removing IP binding: {e}")
+        return False
+    finally:
+        db.close()
+
+def toggle_ip_binding(username, enabled):
+    """Enable or disable IP binding for user"""
+    db = get_db()
+    try:
+        db.execute('UPDATE users SET ip_binding_enabled = ? WHERE username = ?', (enabled, username))
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error toggling IP binding: {e}")
+        return False
+    finally:
+        db.close()
+
 def get_server_stats():
+    """Get server statistics including IP binding info"""
     db = get_db()
     try:
         total_users = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         active_users_db = db.execute('SELECT COUNT(*) FROM users WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)').fetchone()[0]
         total_bandwidth = db.execute('SELECT SUM(bandwidth_used) FROM users').fetchone()[0] or 0
+        
+        # IP binding statistics
+        ip_binding_users = db.execute('SELECT COUNT(*) FROM users WHERE ip_binding_enabled = 1').fetchone()[0]
+        active_sessions_count = db.execute('SELECT COUNT(*) FROM active_sessions').fetchone()[0]
         
         server_load = min(100, (active_users_db * 5) + 10)
         
@@ -259,7 +391,9 @@ def get_server_stats():
             'total_users': total_users,
             'active_users': active_users_db,
             'total_bandwidth': f"{total_bandwidth / 1024 / 1024 / 1024:.2f} GB",
-            'server_load': server_load
+            'server_load': server_load,
+            'ip_binding_users': ip_binding_users,
+            'active_sessions': active_sessions_count
         }
     finally:
         db.close()
@@ -338,7 +472,7 @@ def set_language_and_translations():
     g.lang = lang
     g.t = TRANSLATIONS.get(lang, TRANSLATIONS['my'])
 
-# --- Routes ---
+# --- Enhanced Routes ---
 
 @app.route("/set_lang", methods=["GET"])
 def set_lang():
@@ -390,6 +524,10 @@ def build_view(msg="", err=""):
         status = status_for_user(u, listen_port)
         expires_str=u.get("expires","")
         
+        # Get IP bindings and active sessions for each user
+        ip_bindings = get_user_ip_bindings(u['user'])
+        active_sessions = get_active_sessions(u['user'])
+        
         view.append(type("U",(),{
             "user":u.get("user",""),
             "password":u.get("password",""),
@@ -399,7 +537,10 @@ def build_view(msg="", err=""):
             "bandwidth_limit": u.get('bandwidth_limit', 0),
             "bandwidth_used": f"{u.get('bandwidth_used', 0) / 1024 / 1024 / 1024:.2f}",
             "speed_limit": u.get('speed_limit', 0),
-            "concurrent_conn": u.get('concurrent_conn', 1)
+            "concurrent_conn": u.get('concurrent_conn', 1),
+            "ip_binding_enabled": u.get('ip_binding_enabled', 1),
+            "ip_bindings": ip_bindings,
+            "active_sessions": active_sessions
         }))
     
     view.sort(key=lambda x:(x.user or "").lower())
@@ -428,7 +569,8 @@ def add_user():
         'bandwidth_limit': int(request.form.get("bandwidth_limit") or 0),
         'speed_limit': int(request.form.get("speed_limit") or 0),
         'concurrent_conn': int(request.form.get("concurrent_conn") or 1),
-        'plan_type': (request.form.get("plan_type") or "").strip()
+        'plan_type': (request.form.get("plan_type") or "").strip(),
+        'ip_binding_enabled': 1 if request.form.get("ip_binding_enabled") else 0
     }
     
     if not user_data['user'] or not user_data['password']:
@@ -503,6 +645,84 @@ def activate_user():
         sync_config_passwords()
     return redirect(url_for('index'))
 
+# --- IP Binding Management Routes ---
+
+@app.route("/ip_binding/add", methods=["POST"])
+def add_ip_binding_route():
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    username = request.form.get("username")
+    ip_address = request.form.get("ip_address")
+    
+    if not username or not ip_address:
+        return jsonify({"ok": False, "err": "Username and IP address are required"})
+    
+    if add_ip_binding(username, ip_address):
+        return jsonify({"ok": True, "message": f"IP {ip_address} bound to {username}"})
+    else:
+        return jsonify({"ok": False, "err": "Failed to add IP binding"})
+
+@app.route("/ip_binding/remove", methods=["POST"])
+def remove_ip_binding_route():
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    binding_id = request.form.get("binding_id")
+    
+    if not binding_id:
+        return jsonify({"ok": False, "err": "Binding ID is required"})
+    
+    if remove_ip_binding(binding_id):
+        return jsonify({"ok": True, "message": "IP binding removed"})
+    else:
+        return jsonify({"ok": False, "err": "Failed to remove IP binding"})
+
+@app.route("/ip_binding/toggle", methods=["POST"])
+def toggle_ip_binding_route():
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    username = request.form.get("username")
+    enabled = request.form.get("enabled") == "1"
+    
+    if not username:
+        return jsonify({"ok": False, "err": "Username is required"})
+    
+    if toggle_ip_binding(username, 1 if enabled else 0):
+        status = "enabled" if enabled else "disabled"
+        return jsonify({"ok": True, "message": f"IP binding {status} for {username}"})
+    else:
+        return jsonify({"ok": False, "err": "Failed to toggle IP binding"})
+
+@app.route("/sessions")
+def view_sessions():
+    t = g.t
+    if not require_login(): return redirect(url_for('login'))
+    
+    username = request.args.get('username')
+    sessions = get_active_sessions(username)
+    
+    theme = session.get('theme', 'dark')
+    html_template = load_html_template()
+    return render_template_string(html_template, authed=True, logo=LOGO_URL, 
+                                 sessions=sessions, username=username,
+                                 t=t, lang=g.lang, theme=theme)
+
+@app.route("/connection_logs")
+def view_connection_logs():
+    t = g.t
+    if not require_login(): return redirect(url_for('login'))
+    
+    username = request.args.get('username')
+    logs = get_connection_logs(username)
+    
+    theme = session.get('theme', 'dark')
+    html_template = load_html_template()
+    return render_template_string(html_template, authed=True, logo=LOGO_URL, 
+                                 connection_logs=logs, username=username,
+                                 t=t, lang=g.lang, theme=theme)
+
 # --- API Routes ---
 
 @app.route("/api/bulk", methods=["POST"])
@@ -540,9 +760,9 @@ def export_users():
     if not require_login(): return "Unauthorized", 401
     
     users = load_users()
-    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status\n"
+    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status,IP Binding Enabled\n"
     for u in users:
-        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')}\n"
+        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')},{'Yes' if u.get('ip_binding_enabled') else 'No'}\n"
     
     response = make_response(csv_data)
     response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
@@ -585,6 +805,15 @@ def generate_reports():
                 GROUP BY plan_type, currency
             ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
         
+        elif report_type == 'ip_binding':
+            data = db.execute('''
+                SELECT username, COUNT(*) as ip_count
+                FROM user_ip_binding 
+                WHERE is_active = 1
+                GROUP BY username
+                ORDER BY ip_count DESC
+            ''').fetchall()
+        
         else:
             return jsonify({"message": "Invalid report type"}), 400
 
@@ -611,6 +840,22 @@ def update_user():
     
     return jsonify({"ok": False, "err": "Invalid data"})
 
+@app.route("/api/ip_binding/<username>", methods=["GET"])
+def get_user_ip_bindings_api(username):
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    bindings = get_user_ip_bindings(username)
+    return jsonify({"ok": True, "bindings": bindings})
+
+@app.route("/api/sessions/<username>", methods=["GET"])
+def get_user_sessions_api(username):
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    sessions = get_active_sessions(username)
+    return jsonify({"ok": True, "sessions": sessions})
+
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
+    web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
