@@ -16,7 +16,7 @@ CONFIG_FILE = "/etc/zivpn/config.json"
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
 LISTEN_FALLBACK = "5667"
 RECENT_SECONDS = 120
-LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
+LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/LOGO-URL/main/logo.png"
 
 # GitHub Template URL
 HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
