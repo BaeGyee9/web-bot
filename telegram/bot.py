@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-ZIVPN Telegram Bot - Unlimited Users Version with IP Binding
-MODIFIED: Added IP Binding Management System
+ZIVPN Telegram Bot - Unlimited Users Version
 """
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, filters
@@ -116,80 +115,6 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
-def get_user_ip_bindings(username):
-    """Get IP bindings for a specific user"""
-    db = get_db()
-    bindings = db.execute('''
-        SELECT id, allowed_ip, device_id, is_active, created_at
-        FROM user_ip_binding 
-        WHERE username = ? AND is_active = 1
-        ORDER BY created_at DESC
-    ''', (username,)).fetchall()
-    db.close()
-    return [dict(b) for b in bindings]
-
-def get_active_sessions(username=None):
-    """Get active sessions for users"""
-    db = get_db()
-    if username:
-        sessions = db.execute('''
-            SELECT username, client_ip, port, connected_at, last_activity
-            FROM active_sessions 
-            WHERE username = ?
-            ORDER BY last_activity DESC
-        ''', (username,)).fetchall()
-    else:
-        sessions = db.execute('''
-            SELECT username, client_ip, port, connected_at, last_activity
-            FROM active_sessions 
-            ORDER BY last_activity DESC
-        ''').fetchall()
-    db.close()
-    return [dict(s) for s in sessions]
-
-def add_ip_binding(username, ip_address, device_id=None):
-    """Add IP binding for user"""
-    db = get_db()
-    try:
-        db.execute('''
-            INSERT OR REPLACE INTO user_ip_binding 
-            (username, allowed_ip, device_id, is_active)
-            VALUES (?, ?, ?, 1)
-        ''', (username, ip_address, device_id))
-        db.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Error adding IP binding: {e}")
-        return False
-    finally:
-        db.close()
-
-def remove_ip_binding(binding_id):
-    """Remove IP binding by ID"""
-    db = get_db()
-    try:
-        db.execute('DELETE FROM user_ip_binding WHERE id = ?', (binding_id,))
-        db.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Error removing IP binding: {e}")
-        return False
-    finally:
-        db.close()
-
-def toggle_ip_binding(username, enabled):
-    """Enable or disable IP binding for user"""
-    db = get_db()
-    try:
-        db.execute('UPDATE users SET ip_binding_enabled = ? WHERE username = ?', (enabled, username))
-        db.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Error toggling IP binding: {e}")
-        return False
-    finally:
-        db.close()
-
 def start(update, context):
     """Send welcome message - PUBLIC"""
     user_id = update.effective_user.id
@@ -221,13 +146,6 @@ def start(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
-
-*🔒 IP Binding Commands:*
-/ipinfo <username> - Show user IP bindings
-/ipbind <username> <ip> - Add IP binding
-/ipunbind <username> <ip> - Remove IP binding
-/iptoggle <username> <on|off> - Toggle IP binding
-/sessions [username] - Show active sessions
 """
     
     welcome_text += """
@@ -267,13 +185,6 @@ def help_command(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
-
-🔒 *IP Binding Commands:*
-/ipinfo <username> - Show user IP bindings
-/ipbind <username> <ip> - Add IP binding
-/ipunbind <username> <ip> - Remove IP binding
-/iptoggle <username> <on|off> - Toggle IP binding
-/sessions [username] - Show active sessions
 """
     
     help_text += """
@@ -295,16 +206,12 @@ def admin_command(update, context):
     db = get_db()
     total_users = db.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
     active_users = db.execute('SELECT COUNT(*) as count FROM users WHERE status = "active"').fetchone()['count']
-    ip_binding_users = db.execute('SELECT COUNT(*) as count FROM users WHERE ip_binding_enabled = 1').fetchone()['count']
-    active_sessions = db.execute('SELECT COUNT(*) as count FROM active_sessions').fetchone()['count']
     db.close()
     
     admin_text = f"""
 🛠️ *Admin Panel*
 🌐 Server IP: `{get_server_ip()}`
 📊 Total Users: *{total_users}* (Active: *{active_users}*)
-🔒 IP Binding Users: *{ip_binding_users}*
-🔗 Active Sessions: *{active_sessions}*
 
 *User Management:*
 • /adduser <user> <pass> [days] - Add new user
@@ -317,13 +224,6 @@ def admin_command(update, context):
 • /renew <username> <days> - Renew user (extend from current)
 • /reset <username> <days> - Reset expiry (from today)
 
-*IP Binding Management:*
-• /ipinfo <username> - Show IP bindings
-• /ipbind <username> <ip> - Add IP binding
-• /ipunbind <username> <ip> - Remove IP binding  
-• /iptoggle <username> <on|off> - Toggle IP binding
-• /sessions [username] - Show active sessions
-
 *Information (With Passwords):*
 • /users - List all users with passwords
 • /myinfo <username> - User details with password
@@ -332,9 +232,7 @@ def admin_command(update, context):
 *Usage Examples:*
 /adduser john pass123 30
 /changepass john newpass456
-/ipbind john 192.168.1.100
-/iptoggle john on
-/sessions john
+/users - See all users with passwords
 """
     update.message.reply_text(admin_text, parse_mode='Markdown')
 
@@ -370,10 +268,10 @@ def adduser_command(update, context):
             update.message.reply_text(f"❌ User `{username}` already exists")
             return
         
-        # Add user to database with IP binding enabled by default
+        # Add user to database
         db.execute('''
-            INSERT INTO users (username, password, status, expires, concurrent_conn, ip_binding_enabled, created_at)
-            VALUES (?, ?, 'active', ?, 1, 1, datetime('now'))
+            INSERT INTO users (username, password, status, expires, concurrent_conn, created_at)
+            VALUES (?, ?, 'active', ?, 1, datetime('now'))
         ''', (username, password, expiry_date))
         db.commit()
         
@@ -388,10 +286,8 @@ def adduser_command(update, context):
 📊 Status: Active
 ⏰ Expires: {expiry_date}
 🔗 Connections: 1
-🔒 IP Binding: *Enabled* (Auto-binds first connection)
 
 *User can now connect to VPN immediately*
-*First connecting IP will be automatically bound*
 """
         else:
             success_text = f"""
@@ -400,7 +296,6 @@ def adduser_command(update, context):
 👤 Username: `{username}`
 🔐 Password: `{password}`
 ⏰ Expires: {expiry_date}
-🔒 IP Binding: *Enabled*
 
 💡 User added to database but ZIVPN sync had issues.
    User may need to wait a moment to connect.
@@ -716,10 +611,6 @@ def stats_command(update, context):
             WHERE date(created_at) = date('now')
         ''').fetchone()
         
-        # IP binding statistics
-        ip_binding_users = db.execute('SELECT COUNT(*) as count FROM users WHERE ip_binding_enabled = 1').fetchone()['count']
-        active_sessions_count = db.execute('SELECT COUNT(*) as count FROM active_sessions').fetchone()['count']
-        
         total_users = stats['total_users'] or 0
         active_users = stats['active_users'] or 0
         total_bandwidth = stats['total_bandwidth'] or 0
@@ -732,8 +623,6 @@ def stats_command(update, context):
 🔴 Inactive Users: *{total_users - active_users}*
 🆕 Today's New Users: *{today_new_users}*
 📦 Total Bandwidth Used: *{format_bytes(total_bandwidth)}*
-🔒 IP Binding Users: *{ip_binding_users}*
-🔗 Active Sessions: *{active_sessions_count}*
         """
         update.message.reply_text(stats_text, parse_mode='Markdown')
     except Exception as e:
@@ -752,7 +641,7 @@ def users_command(update, context):
     try:
         # NO LIMIT - show ALL users
         users = db.execute('''
-            SELECT username, password, status, expires, bandwidth_used, concurrent_conn, ip_binding_enabled
+            SELECT username, password, status, expires, bandwidth_used, concurrent_conn
             FROM users
             ORDER BY created_at DESC
         ''').fetchall()  # NO LIMIT 20
@@ -769,13 +658,11 @@ def users_command(update, context):
             # Show first 50 users with summary
             for i, user in enumerate(users[:50]):
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
-                binding_icon = "🔒" if user['ip_binding_enabled'] else "🔓"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                users_text += f"{status_icon}{binding_icon} *{user['username']}*\n"
+                users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
-                users_text += f"🔒 IP Binding: {'Enabled' if user['ip_binding_enabled'] else 'Disabled'}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
                 users_text += "\n"
@@ -786,14 +673,12 @@ def users_command(update, context):
             # Show all users
             for user in users:
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
-                binding_icon = "🔒" if user['ip_binding_enabled'] else "🔓"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                users_text += f"{status_icon}{binding_icon} *{user['username']}*\n"
+                users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
                 users_text += f"🔗 Connections: {user['concurrent_conn']}\n"
-                users_text += f"🔒 IP Binding: {'Enabled' if user['ip_binding_enabled'] else 'Disabled'}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
                 users_text += "\n"
@@ -821,7 +706,7 @@ def myinfo_command(update, context):
     try:
         user = db.execute('''
             SELECT username, password, status, expires, bandwidth_used, bandwidth_limit,
-                   speed_limit_up, concurrent_conn, ip_binding_enabled, created_at
+                   speed_limit_up, concurrent_conn, created_at
             FROM users WHERE username = ?
         ''', (username,)).fetchone()
         
@@ -839,10 +724,6 @@ def myinfo_command(update, context):
                 days_remaining = f" ({days_left} days remaining)" if days_left >= 0 else f" (Expired {-days_left} days ago)"
             except:
                 days_remaining = ""
-        
-        # Get IP bindings and active sessions
-        ip_bindings = get_user_ip_bindings(username)
-        active_sessions = get_active_sessions(username)
                 
         user_text = f"""
 🔍 *User Information: {user['username']}*
@@ -853,219 +734,14 @@ def myinfo_command(update, context):
 🎯 Bandwidth Limit: *{format_bytes(user['bandwidth_limit'] or 0) if user['bandwidth_limit'] else 'Unlimited'}*
 ⚡ Speed Limit: *{user['speed_limit_up'] or 0} MB/s*
 🔗 Max Connections: *{user['concurrent_conn']}*
-🔒 IP Binding: *{'Enabled' if user['ip_binding_enabled'] else 'Disabled'}*
 📅 Created: *{user['created_at'][:10] if user['created_at'] else 'N/A'}*
-"""
-        
-        # Add IP bindings information
-        if ip_bindings:
-            user_text += f"\n*🔒 Allowed IPs ({len(ip_bindings)}):*\n"
-            for binding in ip_bindings:
-                user_text += f"• `{binding['allowed_ip']}`"
-                if binding['device_id']:
-                    user_text += f" (Device: {binding['device_id']})"
-                user_text += f" - {binding['created_at'][:10]}\n"
-        else:
-            user_text += "\n*🔒 Allowed IPs: None (Auto-bind first connection)*\n"
-            
-        # Add active sessions information
-        if active_sessions:
-            user_text += f"\n*🔗 Active Sessions ({len(active_sessions)}):*\n"
-            for session in active_sessions:
-                user_text += f"• `{session['client_ip']}` - Port: {session['port']} - Connected: {session['connected_at'][:19]}\n"
-        else:
-            user_text += "\n*🔗 Active Sessions: None*\n"
-            
+        """
         update.message.reply_text(user_text, parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Error getting user info: {e}")
         update.message.reply_text("❌ Error retrieving user information")
     finally:
         db.close()
-
-# ===== IP BINDING COMMANDS =====
-
-def ipinfo_command(update, context):
-    """Show user IP bindings - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-        
-    if not context.args:
-        update.message.reply_text("Usage: /ipinfo <username>\nExample: /ipinfo john")
-        return
-        
-    username = context.args[0]
-    
-    # Check if user exists
-    db = get_db()
-    user = db.execute('SELECT username, ip_binding_enabled FROM users WHERE username = ?', (username,)).fetchone()
-    if not user:
-        update.message.reply_text(f"❌ User '{username}' not found")
-        db.close()
-        return
-    db.close()
-    
-    ip_bindings = get_user_ip_bindings(username)
-    active_sessions = get_active_sessions(username)
-    
-    binding_status = "Enabled" if user['ip_binding_enabled'] else "Disabled"
-    
-    info_text = f"""
-🔒 *IP Binding Info: {username}*
-📊 Status: *{binding_status}*
-
-*Allowed IPs ({len(ip_bindings)}):*
-"""
-    
-    if ip_bindings:
-        for i, binding in enumerate(ip_bindings, 1):
-            info_text += f"{i}. `{binding['allowed_ip']}`"
-            if binding['device_id']:
-                info_text += f" (Device: {binding['device_id']})"
-            info_text += f" - {binding['created_at'][:10]}\n"
-    else:
-        info_text += "No IP bindings set (Auto-bind first connection)\n"
-    
-    info_text += f"\n*Active Sessions ({len(active_sessions)}):*\n"
-    if active_sessions:
-        for session in active_sessions:
-            info_text += f"• `{session['client_ip']}` - Port: {session['port']} - Connected: {session['connected_at'][:19]}\n"
-    else:
-        info_text += "No active sessions\n"
-        
-    info_text += "\n*Commands:*\n/ipbind <username> <ip> - Add IP\n/ipunbind <username> <ip> - Remove IP\n/iptoggle <username> <on|off> - Toggle IP binding"
-    
-    update.message.reply_text(info_text, parse_mode='Markdown')
-
-def ipbind_command(update, context):
-    """Add IP binding for user - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-        
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /ipbind <username> <ip_address>\nExample: /ipbind john 192.168.1.100")
-        return
-        
-    username = context.args[0]
-    ip_address = context.args[1]
-    
-    # Validate IP address format
-    import re
-    ip_pattern = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
-    if not ip_pattern.match(ip_address):
-        update.message.reply_text("❌ Invalid IP address format")
-        return
-    
-    # Check if user exists
-    db = get_db()
-    user = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
-    if not user:
-        update.message.reply_text(f"❌ User '{username}' not found")
-        db.close()
-        return
-    db.close()
-    
-    if add_ip_binding(username, ip_address):
-        update.message.reply_text(f"✅ IP `{ip_address}` bound to *{username}*", parse_mode='Markdown')
-        logger.info(f"IP {ip_address} bound to {username} by admin {update.effective_user.id}")
-    else:
-        update.message.reply_text("❌ Failed to add IP binding")
-
-def ipunbind_command(update, context):
-    """Remove IP binding for user - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-        
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /ipunbind <username> <ip_address>\nExample: /ipunbind john 192.168.1.100")
-        return
-        
-    username = context.args[0]
-    ip_address = context.args[1]
-    
-    # Find the binding ID
-    bindings = get_user_ip_bindings(username)
-    binding_to_remove = None
-    
-    for binding in bindings:
-        if binding['allowed_ip'] == ip_address:
-            binding_to_remove = binding['id']
-            break
-    
-    if not binding_to_remove:
-        update.message.reply_text(f"❌ IP `{ip_address}` not found for user *{username}*", parse_mode='Markdown')
-        return
-    
-    if remove_ip_binding(binding_to_remove):
-        update.message.reply_text(f"✅ IP `{ip_address}` unbound from *{username}*", parse_mode='Markdown')
-        logger.info(f"IP {ip_address} unbound from {username} by admin {update.effective_user.id}")
-    else:
-        update.message.reply_text("❌ Failed to remove IP binding")
-
-def iptoggle_command(update, context):
-    """Toggle IP binding for user - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-        
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /iptoggle <username> <on|off>\nExample: /iptoggle john on")
-        return
-        
-    username = context.args[0]
-    action = context.args[1].lower()
-    
-    if action not in ['on', 'off']:
-        update.message.reply_text("❌ Invalid action. Use 'on' or 'off'")
-        return
-    
-    enabled = 1 if action == 'on' else 0
-    
-    # Check if user exists
-    db = get_db()
-    user = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
-    if not user:
-        update.message.reply_text(f"❌ User '{username}' not found")
-        db.close()
-        return
-    db.close()
-    
-    if toggle_ip_binding(username, enabled):
-        status = "enabled" if enabled else "disabled"
-        update.message.reply_text(f"✅ IP binding {status} for *{username}*", parse_mode='Markdown')
-        logger.info(f"IP binding {status} for {username} by admin {update.effective_user.id}")
-    else:
-        update.message.reply_text("❌ Failed to toggle IP binding")
-
-def sessions_command(update, context):
-    """Show active sessions - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-    
-    username = context.args[0] if context.args else None
-    
-    active_sessions = get_active_sessions(username)
-    
-    if username:
-        sessions_text = f"🔗 *Active Sessions for {username}*\n\n"
-    else:
-        sessions_text = "🔗 *All Active Sessions*\n\n"
-    
-    if active_sessions:
-        for i, session in enumerate(active_sessions, 1):
-            sessions_text += f"{i}. *{session['username']}*\n"
-            sessions_text += f"   IP: `{session['client_ip']}`\n"
-            sessions_text += f"   Port: {session['port']}\n"
-            sessions_text += f"   Connected: {session['connected_at'][:19]}\n"
-            sessions_text += f"   Last Activity: {session['last_activity'][:19]}\n\n"
-    else:
-        sessions_text += "No active sessions found\n"
-    
-    update.message.reply_text(sessions_text, parse_mode='Markdown')
 
 def error_handler(update, context):
     """Log errors"""
@@ -1099,17 +775,10 @@ def main():
         dp.add_handler(CommandHandler("reset", reset_command))
         dp.add_handler(CommandHandler("users", users_command))
         dp.add_handler(CommandHandler("myinfo", myinfo_command))
-        
-        # IP Binding commands
-        dp.add_handler(CommandHandler("ipinfo", ipinfo_command))
-        dp.add_handler(CommandHandler("ipbind", ipbind_command))
-        dp.add_handler(CommandHandler("ipunbind", ipunbind_command))
-        dp.add_handler(CommandHandler("iptoggle", iptoggle_command))
-        dp.add_handler(CommandHandler("sessions", sessions_command))
 
         dp.add_error_handler(error_handler)
 
-        logger.info("🤖 ZIVPN Telegram Bot with IP Binding Started Successfully")
+        logger.info("🤖 ZIVPN Telegram Bot Started Successfully")
         updater.start_polling()
         updater.idle()
         
