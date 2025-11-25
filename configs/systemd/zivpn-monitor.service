@@ -1,0 +1,23 @@
+[Unit]
+Description=ZIVPN Advanced Connection Monitor
+After=network.target zivpn.service
+Wants=zivpn.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/zivpn
+ExecStart=/usr/bin/python3 /etc/zivpn/advanced_monitor.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
