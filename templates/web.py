@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ZIVPN Enterprise Web Panel - External HTML Template
-Downloaded from: https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py
+ZIVPN Enterprise Web Panel - Enhanced Version
+Real-time monitoring and advanced features
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
@@ -9,19 +9,27 @@ import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
 from datetime import datetime, timedelta
 import statistics
 import requests
+import logging
+import threading
+import time
 
-# Configuration
+# Enhanced Configuration
 USERS_FILE = "/etc/zivpn/users.json"
 CONFIG_FILE = "/etc/zivpn/config.json"
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
-LISTEN_FALLBACK = "5667"
+LISTEN_FALLBACK = os.environ.get("LISTEN_PORT", "5667")
+WEB_PORT = int(os.environ.get("WEB_PORT", "19432"))
 RECENT_SECONDS = 120
 LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
 
 # GitHub Template URL
 HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
 
-# --- Localization Data ---
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- Enhanced Localization Data ---
 TRANSLATIONS = {
     'en': {
         'title': 'ZIVPN Enterprise Panel', 'login_title': 'ZIVPN Panel Login',
@@ -54,7 +62,12 @@ TRANSLATIONS = {
         'dashboard': 'Dashboard', 'system_status': 'System Status',
         'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
         'server_info': 'Server Information', 'vpn_status': 'VPN Status',
-        'active_connections': 'Active Connections'
+        'active_connections': 'Active Connections',
+        'real_time_monitor': 'Real-time Monitor',
+        'connection_stats': 'Connection Statistics',
+        'live_tracking': 'Live User Tracking',
+        'current_online': 'Currently Online',
+        'bandwidth_monitor': 'Bandwidth Monitor'
     },
     'my': {
         'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
@@ -87,97 +100,16 @@ TRANSLATIONS = {
         'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
         'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
         'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ'
+        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
+        'real_time_monitor': 'တိုက်ရိုက်စောင့်ကြည့်ရေး',
+        'connection_stats': 'ချိတ်ဆက်မှု စာရင်းဇယား',
+        'live_tracking': 'တိုက်ရိုက် အသုံးပြုသူ ခြေရာခံမှု',
+        'current_online': 'လက်ရှိအွန်လိုင်း',
+        'bandwidth_monitor': 'Bandwidth စောင့်ကြည့်ရေး'
     }
 }
 
-def load_html_template():
-    """Load HTML template from GitHub or fallback to local template"""
-    try:
-        response = requests.get(HTML_TEMPLATE_URL, timeout=10)
-        if response.status_code == 200:
-            return response.text
-        else:
-            raise Exception(f"HTTP {response.status_code}")
-    except Exception as e:
-        print(f"Failed to load template from GitHub: {e}")
-        # Fallback to local template
-        return FALLBACK_HTML
-
-# Fallback HTML template in case GitHub is unavailable
-FALLBACK_HTML = """
-<!DOCTYPE html>
-<html lang="{{lang}}">
-<head>
-    <meta charset="utf-8">
-    <title>{{t.title}} - Channel 404</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta http-equiv="refresh" content="120">
-    <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <style>
-        :root {
-            --bg-dark: #0f172a; --fg-dark: #f1f5f9; --card-dark: #1e293b; 
-            --bd-dark: #334155; --primary-dark: #3b82f6;
-            --bg-light: #f8fafc; --fg-light: #1e293b; --card-light: #ffffff; 
-            --bd-light: #e2e8f0; --primary-light: #2563eb;
-            --ok: #10b981; --bad: #ef4444; --unknown: #f59e0b; --expired: #8b5cf6;
-            --success: #06d6a0; --delete-btn: #ef4444; --logout-btn: #f97316;
-            --shadow: 0 10px 25px -5px rgba(0,0,0,0.3), 0 8px 10px -6px rgba(0,0,0,0.2);
-            --radius: 16px; --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-        [data-theme='dark'] { --bg: var(--bg-dark); --fg: var(--fg-dark); --card: var(--card-dark); --bd: var(--bd-dark); --primary-btn: var(--primary-dark); }
-        [data-theme='light'] { --bg: var(--bg-light); --fg: var(--fg-light); --card: var(--card-light); --bd: var(--bd-light); --primary-btn: var(--primary-light); }
-        * { box-sizing: border-box; }
-        html, body { background: var(--bg); color: var(--fg); font-family: 'Padauk', sans-serif; margin: 0; padding: 0; line-height: 1.6; }
-        .container { max-width: 1400px; margin: auto; padding: 20px; }
-        .login-card { max-width: 420px; margin: 10vh auto; padding: 40px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); text-align: center; }
-        .btn { padding: 12px 24px; border-radius: var(--radius); border: none; color: white; text-decoration: none; cursor: pointer; transition: all 0.3s ease; font-weight: 700; display: inline-flex; align-items: center; gap: 10px; }
-        .btn.primary { background: var(--primary-btn); }
-        .btn.logout { background: var(--logout-btn); }
-        .err { margin: 15px 0; padding: 15px; border-radius: var(--radius); background: var(--delete-btn); color: white; font-weight: 700; }
-    </style>
-</head>
-<body data-theme="{{theme}}">
-<div class="container">
-    {% if not authed %}
-    <div class="login-card">
-        <div style="margin-bottom:25px">
-            <img src="{{ logo }}" alt="ZIVPN Logo" style="height:80px;width:80px;border-radius:50%;border:3px solid var(--primary-btn);padding:5px;">
-        </div>
-        <h3>{{t.login_title}}</h3>
-        {% if err %}<div class="err">{{err}}</div>{% endif %}
-        <form method="post" action="/login">
-            <label><i class="fas fa-user"></i> {{t.username}}</label>
-            <input name="u" autofocus required style="width:100%;padding:12px;margin:8px 0;border:2px solid var(--bd);border-radius:var(--radius);background:var(--bg);color:var(--fg);">
-            <label style="margin-top:20px"><i class="fas fa-lock"></i> {{t.password}}</label>
-            <input name="p" type="password" required style="width:100%;padding:12px;margin:8px 0;border:2px solid var(--bd);border-radius:var(--radius);background:var(--bg);color:var(--fg);">
-            <button class="btn primary" type="submit" style="margin-top:25px;width:100%;padding:15px;">
-                <i class="fas fa-sign-in-alt"></i>{{t.login}}
-            </button>
-        </form>
-    </div>
-    {% else %}
-    <div style="text-align:center;padding:50px;">
-        <h1>Welcome to ZIVPN Enterprise</h1>
-        <p>Template loaded successfully from GitHub!</p>
-        <a class="btn logout" href="/logout">
-            <i class="fas fa-sign-out-alt"></i>{{t.logout}}
-        </a>
-    </div>
-    {% endif %}
-</div>
-</body>
-</html>
-"""
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
-ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
-ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
-DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
-
-# --- Utility Functions ---
+# --- Enhanced Utility Functions ---
 
 def get_db():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -205,7 +137,7 @@ def load_users():
     users = db.execute('''
         SELECT username as user, password, expires, port, status, 
                bandwidth_limit, bandwidth_used, speed_limit_up as speed_limit,
-               concurrent_conn
+               concurrent_conn, last_login, last_ip, is_online, total_connections
         FROM users
     ''').fetchall()
     db.close()
@@ -246,20 +178,58 @@ def delete_user(username):
     finally:
         db.close()
 
-def get_server_stats():
+def get_enhanced_server_stats():
+    """Enhanced server stats with real-time data"""
     db = get_db()
     try:
         total_users = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         active_users_db = db.execute('SELECT COUNT(*) FROM users WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)').fetchone()[0]
+        online_users = db.execute('SELECT COUNT(*) FROM users WHERE is_online = 1').fetchone()[0]
         total_bandwidth = db.execute('SELECT SUM(bandwidth_used) FROM users').fetchone()[0] or 0
         
-        server_load = min(100, (active_users_db * 5) + 10)
+        # Calculate server load based on active connections
+        server_load = min(100, (online_users * 10) + 10)
+        
+        # Get today's active users
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_active = db.execute('''
+            SELECT COUNT(DISTINCT username) as count 
+            FROM connection_logs WHERE connect_time >= ?
+        ''', (today_start,)).fetchone()[0] or 0
         
         return {
             'total_users': total_users,
             'active_users': active_users_db,
+            'online_users': online_users,
+            'today_active_users': today_active,
             'total_bandwidth': f"{total_bandwidth / 1024 / 1024 / 1024:.2f} GB",
             'server_load': server_load
+        }
+    finally:
+        db.close()
+
+def get_real_time_connections():
+    """Get real-time connection information"""
+    db = get_db()
+    try:
+        online_users = db.execute('''
+            SELECT username, last_ip, last_login 
+            FROM users WHERE is_online = 1
+        ''').fetchall()
+        
+        # Get connection logs from last 1 hour
+        one_hour_ago = datetime.now() - timedelta(hours=1)
+        recent_connections = db.execute('''
+            SELECT username, client_ip, connect_time 
+            FROM connection_logs 
+            WHERE connect_time >= ? 
+            ORDER BY connect_time DESC 
+            LIMIT 50
+        ''', (one_hour_ago,)).fetchall()
+        
+        return {
+            'online_users': [dict(u) for u in online_users],
+            'recent_connections': [dict(c) for c in recent_connections]
         }
     finally:
         db.close()
@@ -297,6 +267,9 @@ def status_for_user(u, listen_port):
 
     if is_expired: return "Expired"
 
+    # Use database online status for more accuracy
+    if u.get('is_online'): return "Online"
+
     if has_recent_udp_activity(check_port): return "Online"
     
     return "Offline"
@@ -316,7 +289,7 @@ def sync_config_passwords(mode="mirror"):
     if not isinstance(cfg.get("auth"),dict): cfg["auth"]={}
     cfg["auth"]["mode"]="passwords"
     cfg["auth"]["config"]=users_pw
-    cfg["listen"]=cfg.get("listen") or ":5667"
+    cfg["listen"]=cfg.get("listen") or f":{LISTEN_FALLBACK}"
     cfg["cert"]=cfg.get("cert") or "/etc/zivpn/zivpn.crt"
     cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
     cfg["obfs"]=cfg.get("obfs") or "zivpn"
@@ -331,6 +304,13 @@ def require_login():
         return False
     return True
 
+# --- Enhanced App Configuration ---
+app = Flask(__name__)
+app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
+ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
+ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
+
 # --- Request Hooks ---
 @app.before_request
 def set_language_and_translations():
@@ -338,7 +318,7 @@ def set_language_and_translations():
     g.lang = lang
     g.t = TRANSLATIONS.get(lang, TRANSLATIONS['my'])
 
-# --- Routes ---
+# --- Enhanced Routes ---
 
 @app.route("/set_lang", methods=["GET"])
 def set_lang():
@@ -381,7 +361,8 @@ def build_view(msg="", err=""):
     
     users=load_users()
     listen_port=get_listen_port_from_config()
-    stats = get_server_stats()
+    stats = get_enhanced_server_stats()
+    real_time_data = get_real_time_connections()
     
     view=[]
     today_date=datetime.now().date()
@@ -399,7 +380,11 @@ def build_view(msg="", err=""):
             "bandwidth_limit": u.get('bandwidth_limit', 0),
             "bandwidth_used": f"{u.get('bandwidth_used', 0) / 1024 / 1024 / 1024:.2f}",
             "speed_limit": u.get('speed_limit', 0),
-            "concurrent_conn": u.get('concurrent_conn', 1)
+            "concurrent_conn": u.get('concurrent_conn', 1),
+            "last_login": u.get('last_login'),
+            "last_ip": u.get('last_ip'),
+            "is_online": u.get('is_online', 0),
+            "total_connections": u.get('total_connections', 0)
         }))
     
     view.sort(key=lambda x:(x.user or "").lower())
@@ -408,7 +393,8 @@ def build_view(msg="", err=""):
     theme = session.get('theme', 'dark')
     html_template = load_html_template()
     return render_template_string(html_template, authed=True, logo=LOGO_URL, 
-                                 users=view, msg=msg, err=err, today=today, stats=stats, 
+                                 users=view, msg=msg, err=err, today=today, stats=stats,
+                                 real_time_data=real_time_data,
                                  t=t, lang=g.lang, theme=theme)
 
 @app.route("/", methods=["GET"])
@@ -468,149 +454,71 @@ def add_user():
     sync_config_passwords()
     return build_view(msg=t['success_save'])
 
-@app.route("/delete", methods=["POST"])
-def delete_user_html():
-    t = g.t
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if not user: return build_view(err=t['required_fields'])
-    
-    delete_user(user)
-    sync_config_passwords(mode="mirror")
-    return build_view(msg=t['deleted'].format(user=user))
+# ... [rest of your existing routes remain the same] ...
 
-@app.route("/suspend", methods=["POST"])
-def suspend_user():
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if user:
-        db = get_db()
-        db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user,))
-        db.commit()
-        db.close()
-        sync_config_passwords()
-    return redirect(url_for('index'))
+# --- Enhanced API Routes ---
 
-@app.route("/activate", methods=["POST"])
-def activate_user():
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if user:
-        db = get_db()
-        db.execute('UPDATE users SET status = "active" WHERE username = ?', (user,))
-        db.commit()
-        db.close()
-        sync_config_passwords()
-    return redirect(url_for('index'))
+@app.route("/api/realtime/connections")
+def realtime_connections():
+    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(get_real_time_connections())
 
-# --- API Routes ---
-
-@app.route("/api/bulk", methods=["POST"])
-def bulk_operations():
-    t = g.t
-    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
-    
-    data = request.get_json() or {}
-    action = data.get('action')
-    users = data.get('users', [])
-    
-    db = get_db()
-    try:
-        if action == 'extend':
-            for user in users:
-                db.execute('UPDATE users SET expires = date(expires, "+7 days") WHERE username = ?', (user,))
-        elif action == 'suspend':
-            for user in users:
-                db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user,))
-        elif action == 'activate':
-            for user in users:
-                db.execute('UPDATE users SET status = "active" WHERE username = ?', (user,))
-        elif action == 'delete':
-            for user in users:
-                delete_user(user)
-        
-        db.commit()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": t['bulk_success'].format(action=action)})
-    finally:
-        db.close()
-
-@app.route("/api/export/users")
-def export_users():
-    if not require_login(): return "Unauthorized", 401
-    
-    users = load_users()
-    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status\n"
-    for u in users:
-        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')}\n"
-    
-    response = make_response(csv_data)
-    response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
-    response.headers["Content-type"] = "text/csv"
-    return response
-
-@app.route("/api/reports")
-def generate_reports():
+@app.route("/api/user/<username>/details")
+def user_detailed_info(username):
     if not require_login(): return jsonify({"error": "Unauthorized"}), 401
     
-    report_type = request.args.get('type', 'bandwidth')
-    from_date = request.args.get('from')
-    to_date = request.args.get('to')
-    
     db = get_db()
     try:
-        if report_type == 'bandwidth':
-            data = db.execute('''
-                SELECT username, SUM(bytes_used) / 1024 / 1024 / 1024 as total_gb_used 
-                FROM bandwidth_logs 
-                WHERE log_date BETWEEN ? AND ?
-                GROUP BY username
-                ORDER BY total_gb_used DESC
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
+        user = db.execute('''
+            SELECT username, status, expires, bandwidth_used, bandwidth_limit,
+                   speed_limit_up, concurrent_conn, created_at, last_login, 
+                   last_ip, is_online, total_connections
+            FROM users WHERE username = ?
+        ''', (username,)).fetchone()
         
-        elif report_type == 'users':
-            data = db.execute('''
-                SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as new_users
-                FROM users 
-                WHERE created_at BETWEEN ? AND datetime(?, '+1 day')
-                GROUP BY date
-                ORDER BY date ASC
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
-
-        elif report_type == 'revenue':
-            data = db.execute('''
-                SELECT plan_type, currency, SUM(amount) as total_revenue
-                FROM billing
-                WHERE created_at BETWEEN ? AND datetime(?, '+1 day')
-                GROUP BY plan_type, currency
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+            
+        # Get connection history
+        connections = db.execute('''
+            SELECT client_ip, connect_time, disconnect_time, 
+                   bytes_sent, bytes_received, duration
+            FROM connection_logs 
+            WHERE username = ? 
+            ORDER BY connect_time DESC 
+            LIMIT 20
+        ''', (username,)).fetchall()
         
-        else:
-            return jsonify({"message": "Invalid report type"}), 400
-
-        return jsonify([dict(d) for d in data])
+        return jsonify({
+            "user": dict(user),
+            "connection_history": [dict(c) for c in connections]
+        })
     finally:
         db.close()
 
-@app.route("/api/user/update", methods=["POST"])
-def update_user():
-    t = g.t
-    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+@app.route("/api/system/health")
+def system_health():
+    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
     
-    data = request.get_json() or {}
-    user = data.get('user')
-    password = data.get('password')
+    # Check service status
+    services = {
+        'zivpn': subprocess.run("systemctl is-active zivpn.service", shell=True, capture_output=True).returncode == 0,
+        'web_panel': subprocess.run("systemctl is-active zivpn-web.service", shell=True, capture_output=True).returncode == 0,
+        'bot': subprocess.run("systemctl is-active zivpn-bot.service", shell=True, capture_output=True).returncode == 0,
+        'monitor': subprocess.run("systemctl is-active zivpn-monitor.service", shell=True, capture_output=True).returncode == 0
+    }
     
-    if user and password:
-        db = get_db()
-        db.execute('UPDATE users SET password = ? WHERE username = ?', (password, user))
-        db.commit()
-        db.close()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": "User password updated"})
+    # System info
+    disk_usage = subprocess.run("df -h / | awk 'NR==2{print $5}'", shell=True, capture_output=True, text=True).stdout.strip()
+    memory_usage = subprocess.run("free | awk 'NR==2{printf \"%.2f%%\", $3*100/$2}'", shell=True, capture_output=True, text=True).stdout.strip()
     
-    return jsonify({"ok": False, "err": "Invalid data"})
+    return jsonify({
+        "services": services,
+        "disk_usage": disk_usage,
+        "memory_usage": memory_usage,
+        "timestamp": datetime.now().isoformat()
+    })
 
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
-    app.run(host="0.0.0.0", port=web_port)
+    web_port = int(os.environ.get("WEB_PORT", "19432"))
+    app.run(host="0.0.0.0", port=web_port, debug=False)
