@@ -12,6 +12,7 @@ import socket
 import json
 import tempfile
 import subprocess
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -27,6 +28,95 @@ CONFIG_FILE = "/etc/zivpn/config.json"
 
 # Admin configuration - ONLY YOUR ID CAN SEE ADMIN COMMANDS
 ADMIN_IDS = [7576434717, 7240495054]  # Telegram ID
+
+# ===== ENHANCED CONNECTION TRACKING =====
+def get_active_connections_accurate():
+    """Get accurate active connections using conntrack with better filtering"""
+    active_connections = {}
+    try:
+        # Get all UDP connections on VPN port range with ESTABLISHED state
+        result = subprocess.run(
+            "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | grep -E '(ESTABLISHED|UNREPLIED)'",
+            shell=True, capture_output=True, text=True, timeout=15
+        )
+        
+        for line in result.stdout.split('\n'):
+            if not line.strip():
+                continue
+                
+            try:
+                # Parse conntrack output to get source IP and destination port
+                parts = line.split()
+                src_ip = None
+                dport = None
+                
+                for part in parts:
+                    if part.startswith('src='):
+                        src_ip = part.split('=')[1]
+                    elif part.startswith('dport='):
+                        dport = part.split('=')[1]
+                
+                if src_ip and dport:
+                    # Track connections per port
+                    if dport not in active_connections:
+                        active_connections[dport] = []
+                    active_connections[dport].append({
+                        'src_ip': src_ip,
+                        'timestamp': datetime.now().isoformat(),
+                        'state': 'ESTABLISHED' if 'ESTABLISHED' in line else 'UNREPLIED'
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error parsing conntrack line: {e}")
+                continue
+                
+    except subprocess.TimeoutExpired:
+        logger.error("Conntrack command timed out")
+    except Exception as e:
+        logger.error(f"Error getting active connections: {e}")
+    
+    return active_connections
+
+def get_user_status_accurate(username):
+    """Get accurate online/offline status for user"""
+    db = get_db()
+    try:
+        user = db.execute('''
+            SELECT username, port, status, expires 
+            FROM users WHERE username = ?
+        ''', (username,)).fetchone()
+        
+        if not user:
+            return "not_found"
+            
+        # Check suspended status
+        if user['status'] == 'suspended':
+            return "suspended"
+
+        # Check expiration
+        expires_str = user.get("expires", "")
+        if expires_str:
+            try:
+                expires_dt = datetime.strptime(expires_str, "%Y-%m-%d").date()
+                if expires_dt < datetime.now().date():
+                    return "expired"
+            except ValueError:
+                pass
+
+        # Check active connections
+        user_port = str(user.get('port') or '5667')
+        active_connections = get_active_connections_accurate()
+        
+        if user_port in active_connections and len(active_connections[user_port]) > 0:
+            return "online"
+        else:
+            return "offline"
+            
+    except Exception as e:
+        logger.error(f"Error getting user status: {e}")
+        return "error"
+    finally:
+        db.close()
 
 # ===== SYNC CONFIG FUNCTIONS =====
 def read_json(path, default):
@@ -146,6 +236,7 @@ def start(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
+/status <username> - Check user online status
 """
     
     welcome_text += """
@@ -185,6 +276,7 @@ def help_command(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
+/status <username> - Check user online status
 """
     
     help_text += """
@@ -227,14 +319,61 @@ def admin_command(update, context):
 *Information (With Passwords):*
 • /users - List all users with passwords
 • /myinfo <username> - User details with password
+• /status <username> - Check online status
 • /stats - Server statistics
 
 *Usage Examples:*
 /adduser john pass123 30
 /changepass john newpass456
+/status john - Check if john is online
 /users - See all users with passwords
 """
     update.message.reply_text(admin_text, parse_mode='Markdown')
+
+def status_command(update, context):
+    """Check user online status - PRIVATE (Admin only)"""
+    if not is_admin(update.effective_user.id):
+        update.message.reply_text("❌ Admin only command")
+        return
+    
+    if not context.args:
+        update.message.reply_text("Usage: /status <username>\nExample: /status john")
+        return
+        
+    username = context.args[0]
+    status = get_user_status_accurate(username)
+    
+    status_icons = {
+        "online": "🟢",
+        "offline": "🔴", 
+        "suspended": "⏸️",
+        "expired": "📅",
+        "not_found": "❌",
+        "error": "⚠️"
+    }
+    
+    status_messages = {
+        "online": "ONLINE - User is currently connected",
+        "offline": "OFFLINE - User is not connected", 
+        "suspended": "SUSPENDED - User account is suspended",
+        "expired": "EXPIRED - User account has expired",
+        "not_found": "NOT FOUND - User does not exist",
+        "error": "ERROR - Could not check status"
+    }
+    
+    icon = status_icons.get(status, "❓")
+    message = status_messages.get(status, "Unknown status")
+    
+    status_text = f"""
+{icon} *User Status: {username}*
+
+*Status:* {message}
+
+*Detailed Info:*
+• Username: `{username}`
+• Current Time: `{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}`
+"""
+    update.message.reply_text(status_text, parse_mode='Markdown')
 
 def adduser_command(update, context):
     """Add new user - PRIVATE (Admin only)"""
@@ -611,6 +750,10 @@ def stats_command(update, context):
             WHERE date(created_at) = date('now')
         ''').fetchone()
         
+        # Get accurate online users count
+        active_connections = get_active_connections_accurate()
+        online_users_count = len(active_connections)
+        
         total_users = stats['total_users'] or 0
         active_users = stats['active_users'] or 0
         total_bandwidth = stats['total_bandwidth'] or 0
@@ -623,6 +766,10 @@ def stats_command(update, context):
 🔴 Inactive Users: *{total_users - active_users}*
 🆕 Today's New Users: *{today_new_users}*
 📦 Total Bandwidth Used: *{format_bytes(total_bandwidth)}*
+
+*🌐 Real-time Connections:*
+🔗 Online Users: *{online_users_count}*
+📡 Total Connections: *{sum(len(conns) for conns in active_connections.values())}*
         """
         update.message.reply_text(stats_text, parse_mode='Markdown')
     except Exception as e:
@@ -641,7 +788,7 @@ def users_command(update, context):
     try:
         # NO LIMIT - show ALL users
         users = db.execute('''
-            SELECT username, password, status, expires, bandwidth_used, concurrent_conn
+            SELECT username, password, status, expires, bandwidth_used, concurrent_conn, port
             FROM users
             ORDER BY created_at DESC
         ''').fetchall()  # NO LIMIT 20
@@ -653,15 +800,22 @@ def users_command(update, context):
         total_users = len(users)
         users_text = f"👥 *All Users ({total_users})*\n\n"
         
+        # Get accurate online status for each user
+        active_connections = get_active_connections_accurate()
+        
         # If too many users, split into chunks
         if total_users > 50:
             # Show first 50 users with summary
             for i, user in enumerate(users[:50]):
-                status_icon = "🟢" if user['status'] == 'active' else "🔴"
+                # Check online status accurately
+                user_port = str(user.get('port') or '5667')
+                is_online = user_port in active_connections and len(active_connections[user_port]) > 0
+                
+                status_icon = "🟢" if is_online else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
                 users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
-                users_text += f"📊 Status: {user['status']}\n"
+                users_text += f"📊 Status: {user['status']} ({'ONLINE' if is_online else 'OFFLINE'})\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
@@ -672,11 +826,15 @@ def users_command(update, context):
         else:
             # Show all users
             for user in users:
-                status_icon = "🟢" if user['status'] == 'active' else "🔴"
+                # Check online status accurately
+                user_port = str(user.get('port') or '5667')
+                is_online = user_port in active_connections and len(active_connections[user_port]) > 0
+                
+                status_icon = "🟢" if is_online else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
                 users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
-                users_text += f"📊 Status: {user['status']}\n"
+                users_text += f"📊 Status: {user['status']} ({'ONLINE' if is_online else 'OFFLINE'})\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
                 users_text += f"🔗 Connections: {user['concurrent_conn']}\n"
                 if user['expires']:
@@ -706,7 +864,7 @@ def myinfo_command(update, context):
     try:
         user = db.execute('''
             SELECT username, password, status, expires, bandwidth_used, bandwidth_limit,
-                   speed_limit_up, concurrent_conn, created_at
+                   speed_limit_up, concurrent_conn, created_at, port
             FROM users WHERE username = ?
         ''', (username,)).fetchone()
         
@@ -724,16 +882,25 @@ def myinfo_command(update, context):
                 days_remaining = f" ({days_left} days remaining)" if days_left >= 0 else f" (Expired {-days_left} days ago)"
             except:
                 days_remaining = ""
+        
+        # Get accurate online status
+        user_port = str(user.get('port') or '5667')
+        active_connections = get_active_connections_accurate()
+        is_online = user_port in active_connections and len(active_connections[user_port]) > 0
+        online_status = "🟢 ONLINE" if is_online else "🔴 OFFLINE"
+        connections_count = len(active_connections.get(user_port, []))
                 
         user_text = f"""
 🔍 *User Information: {user['username']}*
 🔐 Password: `{user['password']}`
 📊 Status: *{user['status'].upper()}*
+🌐 Connection: *{online_status}* ({connections_count} connections)
 ⏰ Expires: *{user['expires'] or 'Never'}{days_remaining}*
 📦 Bandwidth Used: *{format_bytes(user['bandwidth_used'] or 0)}*
 🎯 Bandwidth Limit: *{format_bytes(user['bandwidth_limit'] or 0) if user['bandwidth_limit'] else 'Unlimited'}*
 ⚡ Speed Limit: *{user['speed_limit_up'] or 0} MB/s*
 🔗 Max Connections: *{user['concurrent_conn']}*
+🔌 Port: *{user['port'] or 'Default (5667)'}*
 📅 Created: *{user['created_at'][:10] if user['created_at'] else 'N/A'}*
         """
         update.message.reply_text(user_text, parse_mode='Markdown')
@@ -775,6 +942,7 @@ def main():
         dp.add_handler(CommandHandler("reset", reset_command))
         dp.add_handler(CommandHandler("users", users_command))
         dp.add_handler(CommandHandler("myinfo", myinfo_command))
+        dp.add_handler(CommandHandler("status", status_command))
 
         dp.add_error_handler(error_handler)
 
