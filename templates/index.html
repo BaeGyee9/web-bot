@@ -95,6 +95,20 @@ html,body{
     margin-top: 5px;
 }
 
+/* Connection Status Badge */
+.connection-badge {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: rgba(255,255,255,0.2);
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-size: 0.8em;
+    font-weight: 600;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
 /* Bottom Navigation Bar */
 .bottom-nav {
     position: fixed;
@@ -187,6 +201,7 @@ html,body{
     box-shadow: var(--shadow);
     border: 1px solid var(--bd);
     transition: transform 0.3s ease;
+    position: relative;
 }
 
 .stat-card:hover {
@@ -212,6 +227,24 @@ html,body{
     font-size: 0.85em;
     color: var(--bd);
     font-weight: 600;
+}
+
+/* Real-time Connection Indicator */
+.realtime-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
 }
 
 /* Quick Actions */
@@ -331,6 +364,9 @@ input:focus, select:focus {
 .btn-danger { background: var(--delete-btn); }
 .btn-danger:hover { background: #dc2626; transform: translateY(-1px); }
 
+.btn-warning { background: var(--unknown); }
+.btn-warning:hover { background: #d97706; transform: translateY(-1px); }
+
 .btn-block {
     width: 100%;
     justify-content: center;
@@ -383,6 +419,27 @@ tr:hover {
 .pill-offline { background: var(--bad); }
 .pill-expired { background: var(--expired); }
 .pill-suspended { background: var(--unknown); }
+
+/* Connection Status Indicator */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8em;
+    font-weight: 600;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-online { background: var(--ok); }
+.status-offline { background: var(--bad); }
+.status-suspended { background: var(--unknown); }
+.status-expired { background: var(--expired); }
 
 /* Action Buttons */
 .action-btns {
@@ -550,6 +607,40 @@ tr:hover {
     color: white;
 }
 
+/* Connection Stats */
+.connection-stats {
+    background: var(--card);
+    padding: 15px;
+    border-radius: var(--radius);
+    margin: 15px 0;
+    border-left: 4px solid var(--primary-btn);
+}
+
+.connection-stats h4 {
+    margin: 0 0 10px 0;
+    color: var(--primary-btn);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stats-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.stats-label {
+    color: var(--bd);
+    font-weight: 600;
+}
+
+.stats-value {
+    color: var(--fg);
+    font-weight: 700;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .container {
@@ -564,6 +655,14 @@ tr:hover {
     
     .header h1 {
         font-size: 1.5em;
+    }
+    
+    .connection-badge {
+        position: relative;
+        top: auto;
+        right: auto;
+        margin-top: 10px;
+        display: inline-block;
     }
     
     .stats-grid {
@@ -605,6 +704,10 @@ tr:hover {
     .nav-label {
         font-size: 0.65em;
     }
+    
+    .action-btns {
+        flex-direction: column;
+    }
 }
     </style>
 </head>
@@ -642,11 +745,32 @@ tr:hover {
                 <h1>ZIVPN Enterprise</h1>
             </div>
             <div class="subtitle">Management System</div>
+            <div class="connection-badge">
+                <i class="fas fa-signal"></i>
+                <span id="connectionCount">0</span> Online
+            </div>
         </div>
     </header>
 
     <!-- Home Section -->
     <div id="home" class="content-section active">
+        <!-- Real-time Connection Stats -->
+        <div class="connection-stats">
+            <h4><i class="fas fa-chart-line"></i> Real-time Connection Status</h4>
+            <div class="stats-row">
+                <span class="stats-label">Total Online Users:</span>
+                <span class="stats-value" id="onlineUsers">0</span>
+            </div>
+            <div class="stats-row">
+                <span class="stats-label">Active Connections:</span>
+                <span class="stats-value" id="activeConnections">0</span>
+            </div>
+            <div class="stats-row">
+                <span class="stats-label">Last Updated:</span>
+                <span class="stats-value" id="lastUpdated">Just now</span>
+            </div>
+        </div>
+
         <!-- Stats Overview -->
         <div class="stats-grid">
             <div class="stat-card">
@@ -655,6 +779,7 @@ tr:hover {
                 </div>
                 <div class="stat-number">{{ stats.total_users }}</div>
                 <div class="stat-label">{{t.total_users}}</div>
+                <div class="realtime-indicator"></div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon" style="color:var(--ok);">
@@ -662,6 +787,7 @@ tr:hover {
                 </div>
                 <div class="stat-number">{{ stats.active_users }}</div>
                 <div class="stat-label">{{t.active_users}}</div>
+                <div class="realtime-indicator"></div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon" style="color:var(--delete-btn);">
@@ -710,7 +836,13 @@ tr:hover {
                 <div style="padding: 10px; border-bottom: 1px solid var(--bd); display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <strong>{{u.user}}</strong>
-                        <div style="font-size: 0.8em; color: var(--bd);">Port: {{u.port or 'Default'}}</div>
+                        <div style="font-size: 0.8em; color: var(--bd);">
+                            Port: {{u.port or 'Default'}} | 
+                            <span class="status-indicator">
+                                <span class="status-dot status-{{u.status|lower}}"></span>
+                                {{u.status|upper}}
+                            </span>
+                        </div>
                     </div>
                     <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
                 </div>
@@ -728,6 +860,9 @@ tr:hover {
                 <button class="btn btn-primary" onclick="filterUsers()">
                     <i class="fas fa-search"></i>
                 </button>
+                <button class="btn btn-success" onclick="refreshConnections()">
+                    <i class="fas fa-sync-alt"></i> Refresh Status
+                </button>
             </div>
         </div>
 
@@ -738,18 +873,23 @@ tr:hover {
                         <th>{{t.user}}</th>
                         <th>{{t.password}}</th>
                         <th>{{t.expires}}</th>
+                        <th>{{t.port}}</th>
                         <th>{{t.status}}</th>
                         <th>{{t.actions}}</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for u in users %}
-                <tr>
+                <tr data-user="{{u.user}}" data-port="{{u.port or '5667'}}">
                     <td><strong>{{u.user}}</strong></td>
                     <td>{{u.password}}</td>
                     <td>{{u.expires or '-'}}</td>
+                    <td>{{u.port or 'Default'}}</td>
                     <td>
-                        <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
+                        <span class="status-indicator">
+                            <span class="status-dot status-{{u.status|lower}}" id="status-{{u.user}}"></span>
+                            <span id="text-{{u.user}}">{{u.status}}</span>
+                        </span>
                     </td>
                     <td>
                         <div class="action-btns">
@@ -758,6 +898,9 @@ tr:hover {
                             </button>
                             <button class="action-btn btn-primary" onclick="editUser('{{u.user}}')" title="Edit">
                                 <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="action-btn btn-warning" onclick="checkUserStatus('{{u.user}}', '{{u.port or '5667'}}')" title="Check Status">
+                                <i class="fas fa-sync"></i>
                             </button>
                         </div>
                     </td>
@@ -960,6 +1103,71 @@ tr:hover {
 {% endif %}
 
 <script>
+// Real-time connection monitoring
+let connectionMonitor = null;
+
+function startConnectionMonitoring() {
+    // Update connections every 10 seconds
+    connectionMonitor = setInterval(updateConnectionStats, 10000);
+    updateConnectionStats(); // Initial update
+}
+
+function updateConnectionStats() {
+    fetch('/api/connections')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('connectionCount').textContent = Object.keys(data.active_connections).length;
+            document.getElementById('onlineUsers').textContent = Object.keys(data.active_connections).length;
+            document.getElementById('activeConnections').textContent = data.total_connections;
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            
+            // Update individual user status
+            updateUserStatuses(data.active_connections);
+        })
+        .catch(error => {
+            console.error('Error fetching connection data:', error);
+        });
+}
+
+function updateUserStatuses(activeConnections) {
+    // Update each user's status based on active connections
+    document.querySelectorAll('#userTable tbody tr').forEach(row => {
+        const username = row.getAttribute('data-user');
+        const port = row.getAttribute('data-port');
+        const statusDot = document.getElementById(`status-${username}`);
+        const statusText = document.getElementById(`text-${username}`);
+        
+        if (statusDot && statusText) {
+            if (activeConnections[port] && activeConnections[port] > 0) {
+                statusDot.className = 'status-dot status-online';
+                statusText.textContent = 'ONLINE';
+            } else {
+                statusDot.className = 'status-dot status-offline';
+                statusText.textContent = 'OFFLINE';
+            }
+        }
+    });
+}
+
+function refreshConnections() {
+    updateConnectionStats();
+    showNotification('Connection status refreshed', 'success');
+}
+
+function checkUserStatus(username, port) {
+    fetch('/api/connections')
+        .then(response => response.json())
+        .then(data => {
+            const isOnline = data.active_connections[port] && data.active_connections[port] > 0;
+            const status = isOnline ? 'ONLINE' : 'OFFLINE';
+            showNotification(`User ${username} is ${status}`, isOnline ? 'success' : 'warning');
+        })
+        .catch(error => {
+            console.error('Error checking user status:', error);
+            showNotification('Error checking user status', 'error');
+        });
+}
+
 // Navigation Functions
 function showSection(sectionId) {
     // Hide all sections
@@ -1003,6 +1211,24 @@ function changeLanguage(lang) {
     window.location.href = '/set_lang?lang=' + lang;
 }
 
+// Notification function
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type}`;
+    notification.textContent = message;
+    notification.style.position = 'fixed';
+    notification.style.top = '20px';
+    notification.style.right = '20px';
+    notification.style.zIndex = '10000';
+    notification.style.maxWidth = '300px';
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 3000);
+}
+
 // Initialize theme from localStorage
 document.addEventListener('DOMContentLoaded', () => {
     const storedTheme = localStorage.getItem('theme') || 'dark';
@@ -1015,6 +1241,9 @@ document.addEventListener('DOMContentLoaded', () => {
             option.classList.add('active');
         }
     });
+    
+    // Start connection monitoring
+    startConnectionMonitoring();
 });
 
 // User Management Functions
@@ -1053,10 +1282,10 @@ function editUser(username) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({user: username, password: newPass})
         }).then(r => r.json()).then(data => {
-            alert(data.message); 
-            location.reload();
+            showNotification(data.message, 'success');
+            setTimeout(() => location.reload(), 1000);
         }).catch(e => {
-            alert('Error: ' + e.message);
+            showNotification('Error: ' + e.message, 'error');
         });
     }
 }
@@ -1068,7 +1297,7 @@ function executeBulkAction() {
     const users = document.getElementById('bulkUsers').value;
     
     if (!action || !users) { 
-        alert(t.select_action + ' / ' + t.user + ' လိုအပ်သည်'); 
+        showNotification(t.select_action + ' / ' + t.user + ' လိုအပ်သည်', 'error'); 
         return; 
     }
 
@@ -1079,10 +1308,10 @@ function executeBulkAction() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action, users: users.split(',').map(u => u.trim()).filter(u => u)})
     }).then(r => r.json()).then(data => {
-        alert(data.message.replace('{action}', action)); 
-        location.reload();
+        showNotification(data.message.replace('{action}', action), 'success');
+        setTimeout(() => location.reload(), 1000);
     }).catch(e => {
-        alert('Error: ' + e.message);
+        showNotification('Error: ' + e.message, 'error');
     });
 }
 
@@ -1095,7 +1324,7 @@ function generateReport() {
     const t = {{t|tojson}};
 
     if (!from || !to) {
-        alert(t.report_range);
+        showNotification(t.report_range, 'error');
         return;
     }
 
@@ -1123,6 +1352,13 @@ window.onclick = function(event) {
         closeSettings();
     }
 }
+
+// Stop monitoring when page unloads
+window.addEventListener('beforeunload', () => {
+    if (connectionMonitor) {
+        clearInterval(connectionMonitor);
+    }
+});
 </script>
 </body>
 </html>
