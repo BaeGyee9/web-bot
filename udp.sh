@@ -2,6 +2,7 @@
 # ZIVPN UDP Server + Web UI (Myanmar) - ENTERPRISE EDITION
 # Author: မောင်သုည [🇲🇲]
 # Features: Complete Enterprise Management System with Bandwidth Control, Billing, Multi-Server, API, etc.
+# ENHANCED: Accurate Connection Tracking for Online/Offline Status
 set -euo pipefail
 
 # ===== Pretty =====
@@ -9,7 +10,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; M="\e[1;35
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ echo -e "$1"; }
 
-echo -e "\n$LINE\n${G}🌟 ZIVPN UDP Server + Web UI - ENTERPRISE EDITION ${Z}\n${M}🧑‍💻 Script By မောင်သုည [🇲🇲] ${Z}\n$LINE"
+echo -e "\n$LINE\n${G}🌟 ZIVPN UDP Server + Web UI - ENTERPRISE EDITION ${Z}\n${M}🧑‍💻 Script By မောင်သုည [🇲🇲] ${Z}\n${C}🔍 Enhanced: Accurate Connection Tracking ${Z}\n$LINE"
 
 # ===== Root check & apt guards =====
 if [ "$(id -u)" -ne 0 ]; then
@@ -60,7 +61,7 @@ apt-get install -y curl ufw jq python3 python3-flask python3-pip python3-venv ip
   apt-get install -y curl ufw jq python3 python3-flask python3-pip iproute2 conntrack ca-certificates sqlite3 >/dev/null
 }
 
-# Additional Python packages
+# Additional Python packages for enhanced tracking
 pip3 install requests python-dateutil python-dotenv python-telegram-bot >/dev/null 2>&1 || true
 apt_guard_end
 
@@ -151,6 +152,23 @@ CREATE TABLE IF NOT EXISTS notifications (
     read_status INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Add connection tracking table
+CREATE TABLE IF NOT EXISTS connection_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    src_ip TEXT NOT NULL,
+    connection_type TEXT DEFAULT 'UDP',
+    status TEXT DEFAULT 'active',
+    connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    disconnected_at DATETIME,
+    duration_seconds INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_connection_logs_username ON connection_logs(username);
+CREATE INDEX IF NOT EXISTS idx_connection_logs_port ON connection_logs(port);
+CREATE INDEX IF NOT EXISTS idx_connection_logs_status ON connection_logs(status);
 EOF
 
 # ===== Base config & Certs =====
@@ -245,6 +263,180 @@ if [ $? -ne 0 ]; then
   # Fallback bot code would go here
 fi
 
+# ===== Enhanced Connection Manager =====
+say "${Y}🔗 Enhanced Connection Manager ထည့်သွင်းနေပါတယ်...${Z}"
+cat >/etc/zivpn/connection_manager.py <<'PY'
+import sqlite3
+import subprocess
+import time
+import threading
+from datetime import datetime
+import os
+
+DATABASE_PATH = "/etc/zivpn/zivpn.db"
+
+class ConnectionManager:
+    def __init__(self):
+        self.connection_tracker = {}
+        self.lock = threading.Lock()
+        
+    def get_db(self):
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+        
+    def get_active_connections_accurate(self):
+        """Get accurate active connections using conntrack with better filtering"""
+        active_connections = {}
+        try:
+            # Get all UDP connections on VPN port range with ESTABLISHED state
+            result = subprocess.run(
+                "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | grep -E '(ESTABLISHED|UNREPLIED)'",
+                shell=True, capture_output=True, text=True, timeout=15
+            )
+            
+            for line in result.stdout.split('\n'):
+                if not line.strip():
+                    continue
+                    
+                try:
+                    # Parse conntrack output to get source IP and destination port
+                    parts = line.split()
+                    src_ip = None
+                    dport = None
+                    
+                    for part in parts:
+                        if part.startswith('src='):
+                            src_ip = part.split('=')[1]
+                        elif part.startswith('dport='):
+                            dport = part.split('=')[1]
+                    
+                    if src_ip and dport:
+                        # Track connections per port
+                        if dport not in active_connections:
+                            active_connections[dport] = []
+                        active_connections[dport].append({
+                            'src_ip': src_ip,
+                            'timestamp': datetime.now().isoformat(),
+                            'state': 'ESTABLISHED' if 'ESTABLISHED' in line else 'UNREPLIED'
+                        })
+                        
+                except Exception as e:
+                    print(f"Error parsing conntrack line: {e}")
+                    continue
+                    
+        except subprocess.TimeoutExpired:
+            print("Conntrack command timed out")
+        except Exception as e:
+            print(f"Error getting active connections: {e}")
+        
+        return active_connections
+            
+    def enforce_connection_limits(self):
+        """Enforce connection limits for all users with accurate tracking"""
+        db = self.get_db()
+        try:
+            # Get all active users with their connection limits
+            users = db.execute('''
+                SELECT username, concurrent_conn, port 
+                FROM users 
+                WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)
+            ''').fetchall()
+            
+            active_connections = self.get_active_connections_accurate()
+            
+            # Update user connection status in database
+            for user in users:
+                username = user['username']
+                max_connections = user['concurrent_conn']
+                user_port = str(user['port'] or '5667')
+                
+                # Count connections for this user (by port)
+                user_conn_count = len(active_connections.get(user_port, []))
+                
+                # Log user status for debugging
+                if user_conn_count > 0:
+                    print(f"User {username} is ONLINE with {user_conn_count} connections on port {user_port}")
+                else:
+                    print(f"User {username} is OFFLINE on port {user_port}")
+                
+                # If over limit, drop oldest connections
+                if user_conn_count > max_connections:
+                    print(f"User {username} has {user_conn_count} connections (limit: {max_connections}) - dropping excess")
+                    
+                    # Drop excess connections (FIFO)
+                    excess = user_conn_count - max_connections
+                    connections_to_drop = active_connections[user_port][:excess]
+                    
+                    for conn in connections_to_drop:
+                        self.drop_connection(conn['src_ip'], user_port)
+            
+            db.commit()
+            
+            # Log connection statistics
+            total_active = sum(len(conns) for conns in active_connections.values())
+            print(f"Connection Manager: {total_active} total active connections across {len(active_connections)} ports")
+            
+        except Exception as e:
+            print(f"Error in connection manager: {e}")
+        finally:
+            db.close()
+            
+    def drop_connection(self, src_ip, dport):
+        """Drop a specific connection using conntrack"""
+        try:
+            result = subprocess.run(
+                f"conntrack -D -p udp --dport {dport} --src {src_ip}",
+                shell=True, capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                print(f"Successfully dropped connection: {src_ip}:{dport}")
+            else:
+                print(f"Failed to drop connection {src_ip}:{dport}: {result.stderr}")
+        except Exception as e:
+            print(f"Error dropping connection {src_ip}:{dport}: {e}")
+            
+    def start_monitoring(self):
+        """Start the connection monitoring loop"""
+        def monitor_loop():
+            while True:
+                try:
+                    self.enforce_connection_limits()
+                    time.sleep(10)  # Check every 10 seconds for accuracy
+                except Exception as e:
+                    print(f"Monitoring error: {e}")
+                    time.sleep(30)
+                    
+        monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+        monitor_thread.start()
+        
+    def get_connection_stats(self):
+        """Get current connection statistics"""
+        active_connections = self.get_active_connections_accurate()
+        stats = {
+            'total_connections': sum(len(conns) for conns in active_connections.values()),
+            'ports_with_connections': len(active_connections),
+            'connections_by_port': {port: len(conns) for port, conns in active_connections.items()},
+            'timestamp': datetime.now().isoformat()
+        }
+        return stats
+
+# Global instance
+connection_manager = ConnectionManager()
+
+if __name__ == "__main__":
+    print("Starting Enhanced Connection Manager...")
+    connection_manager.start_monitoring()
+    try:
+        while True:
+            # Print stats every minute
+            stats = connection_manager.get_connection_stats()
+            print(f"Connection Stats: {stats['total_connections']} total connections on {stats['ports_with_connections']} ports")
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("Stopping Connection Manager...")
+PY
+
 # ===== API Service =====
 say "${Y}🔌 API Service ထည့်သွင်းနေပါတယ်...${Z}"
 cat >/etc/zivpn/api.py <<'PY'
@@ -252,14 +444,58 @@ from flask import Flask, jsonify, request
 import sqlite3, datetime
 from datetime import timedelta
 import os
+import subprocess
+import json
 
 app = Flask(__name__)
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
+CONFIG_FILE = "/etc/zivpn/config.json"
 
 def get_db():
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def get_active_connections_accurate():
+    """Get accurate active connections using conntrack with better filtering"""
+    active_connections = {}
+    try:
+        # Get all UDP connections on VPN port range with ESTABLISHED state
+        result = subprocess.run(
+            "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | grep -E '(ESTABLISHED|UNREPLIED)'",
+            shell=True, capture_output=True, text=True, timeout=15
+        )
+        
+        for line in result.stdout.split('\n'):
+            if not line.strip():
+                continue
+                
+            try:
+                # Parse conntrack output to get source IP and destination port
+                parts = line.split()
+                src_ip = None
+                dport = None
+                
+                for part in parts:
+                    if part.startswith('src='):
+                        src_ip = part.split('=')[1]
+                    elif part.startswith('dport='):
+                        dport = part.split('=')[1]
+                
+                if src_ip and dport:
+                    # Track connections per port
+                    active_connections[dport] = active_connections.get(dport, 0) + 1
+                    
+            except Exception as e:
+                print(f"Error parsing conntrack line: {e}")
+                continue
+                
+    except subprocess.TimeoutExpired:
+        print("Conntrack command timed out")
+    except Exception as e:
+        print(f"Error getting active connections: {e}")
+    
+    return active_connections
 
 @app.route('/api/v1/stats', methods=['GET'])
 def get_stats():
@@ -272,16 +508,23 @@ def get_stats():
         FROM users
     ''').fetchone()
     db.close()
+    
+    # Get accurate online users count
+    active_connections = get_active_connections_accurate()
+    online_users_count = len(active_connections)
+    
     return jsonify({
         "total_users": stats['total_users'],
         "active_users": stats['active_users'],
-        "total_bandwidth_bytes": stats['total_bandwidth']
+        "online_users": online_users_count,
+        "total_bandwidth_bytes": stats['total_bandwidth'],
+        "active_connections": sum(active_connections.values())
     })
 
 @app.route('/api/v1/users', methods=['GET'])
 def get_users():
     db = get_db()
-    users = db.execute('SELECT username, status, expires, bandwidth_used, concurrent_conn FROM users').fetchall()
+    users = db.execute('SELECT username, status, expires, bandwidth_used, concurrent_conn, port FROM users').fetchall()
     db.close()
     return jsonify([dict(u) for u in users])
 
@@ -317,265 +560,17 @@ def update_bandwidth(username):
     db.close()
     return jsonify({"message": "Bandwidth updated"})
 
+@app.route('/api/connections', methods=['GET'])
+def get_connections():
+    """API to get current active connections"""
+    active_connections = get_active_connections_accurate()
+    return jsonify({
+        "active_connections": active_connections,
+        "total_connections": sum(active_connections.values())
+    })
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8081)
-PY
-
-# ===== Daily Cleanup Script =====
-say "${Y}🧹 Daily Cleanup Service ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/cleanup.py <<'PY'
-import sqlite3
-import datetime
-import os
-import subprocess
-import json
-import tempfile
-
-DATABASE_PATH = "/etc/zivpn/zivpn.db"
-CONFIG_FILE = "/etc/zivpn/config.json"
-
-def get_db():
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def read_json(path, default):
-    try:
-        with open(path,"r") as f: return json.load(f)
-    except Exception:
-        return default
-
-def write_json_atomic(path, data):
-    d=json.dumps(data, ensure_ascii=False, indent=2)
-    dirn=os.path.dirname(path); fd,tmp=tempfile.mkstemp(prefix=".tmp-", dir=dirn)
-    try:
-        with os.fdopen(fd,"w") as f: f.write(d)
-        os.replace(tmp,path)
-    finally:
-        try: os.remove(tmp)
-        except: pass
-
-def sync_config_passwords():
-    # Only sync passwords for non-suspended/non-expired users
-    db = get_db()
-    active_users = db.execute('''
-        SELECT password FROM users 
-        WHERE status = "active" AND password IS NOT NULL AND password != "" 
-              AND (expires IS NULL OR expires >= CURRENT_DATE)
-    ''').fetchall()
-    db.close()
-    
-    users_pw = sorted({str(u["password"]) for u in active_users})
-    
-    cfg=read_json(CONFIG_FILE,{})
-    if not isinstance(cfg.get("auth"),dict): cfg["auth"]={}
-    cfg["auth"]["mode"]="passwords"
-    cfg["auth"]["config"]=users_pw
-    
-    write_json_atomic(CONFIG_FILE,cfg)
-    subprocess.run("systemctl restart zivpn.service", shell=True)
-
-def daily_cleanup():
-    db = get_db()
-    today = datetime.datetime.now().date().strftime("%Y-%m-%d")
-    suspended_count = 0
-    
-    try:
-        # 1. Auto-suspend expired users
-        expired_users = db.execute('''
-            SELECT username, expires, status FROM users
-            WHERE status = 'active' AND expires < ?
-        ''', (today,)).fetchall()
-        
-        for user in expired_users:
-            db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user['username'],))
-            suspended_count += 1
-            print(f"User {user['username']} expired on {user['expires']} and was suspended.")
-            
-        db.commit()
-
-        # 2. Re-sync passwords to exclude the newly suspended users
-        if suspended_count > 0:
-            print(f"Total {suspended_count} users suspended. Restarting ZIVPN service...")
-            sync_config_passwords()
-        
-        print(f"Cleanup finished. {suspended_count} users suspended today.")
-        
-    except Exception as e:
-        print(f"An error occurred during daily cleanup: {e}")
-        
-    finally:
-        db.close()
-
-if __name__ == '__main__':
-    daily_cleanup()
-PY
-
-# ===== Backup Script =====
-say "${Y}💾 Backup System ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/backup.py <<'PY'
-import sqlite3, shutil, datetime, os, gzip
-
-BACKUP_DIR = "/etc/zivpn/backups"
-DATABASE_PATH = "/etc/zivpn/zivpn.db"
-
-def backup_database():
-    if not os.path.exists(BACKUP_DIR):
-        os.makedirs(BACKUP_DIR)
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = os.path.join(BACKUP_DIR, f"zivpn_backup_{timestamp}.db.gz")
-    
-    # Backup database
-    with open(DATABASE_PATH, 'rb') as f_in:
-        with gzip.open(backup_file, 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-    
-    # Cleanup old backups (keep last 7 days)
-    for file in os.listdir(BACKUP_DIR):
-        file_path = os.path.join(BACKUP_DIR, file)
-        if os.path.isfile(file_path):
-            file_time = datetime.datetime.fromtimestamp(os.path.getctime(file_path))
-            if (datetime.datetime.now() - file_time).days > 7:
-                os.remove(file_path)
-    
-    print(f"Backup created: {backup_file}")
-
-if __name__ == '__main__':
-    backup_database()
-PY
-
-# ===== Connection Manager =====
-say "${Y}🔗 Connection Manager ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/connection_manager.py <<'PY'
-import sqlite3
-import subprocess
-import time
-import threading
-from datetime import datetime
-import os
-
-DATABASE_PATH = "/etc/zivpn/zivpn.db"
-
-class ConnectionManager:
-    def __init__(self):
-        self.connection_tracker = {}
-        self.lock = threading.Lock()
-        
-    def get_db(self):
-        conn = sqlite3.connect(DATABASE_PATH)
-        conn.row_factory = sqlite3.Row
-        return conn
-        
-    def get_active_connections(self):
-        """Get active connections using conntrack"""
-        try:
-            result = subprocess.run(
-                "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | awk '{print $7,$8}'",
-                shell=True, capture_output=True, text=True
-            )
-            
-            connections = {}
-            for line in result.stdout.split('\n'):
-                if 'src=' in line and 'dport=' in line:
-                    try:
-                        parts = line.split()
-                        src_ip = None
-                        dport = None
-                        
-                        for part in parts:
-                            if part.startswith('src='):
-                                src_ip = part.split('=')[1]
-                            elif part.startswith('dport='):
-                                dport = part.split('=')[1]
-                        
-                        if src_ip and dport:
-                            connections[f"{src_ip}:{dport}"] = True
-                    except:
-                        continue
-            return connections
-        except:
-            return {}
-            
-    def enforce_connection_limits(self):
-        """Enforce connection limits for all users"""
-        db = self.get_db()
-        try:
-            # Get all active users with their connection limits
-            users = db.execute('''
-                SELECT username, concurrent_conn, port 
-                FROM users 
-                WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)
-            ''').fetchall()
-            
-            active_connections = self.get_active_connections()
-            
-            for user in users:
-                username = user['username']
-                max_connections = user['concurrent_conn']
-                user_port = str(user['port'] or '5667')
-                
-                # Count connections for this user (by port)
-                user_conn_count = 0
-                user_connections = []
-                
-                for conn_key in active_connections:
-                    if conn_key.endswith(f":{user_port}"):
-                        user_conn_count += 1
-                        user_connections.append(conn_key)
-                
-                # If over limit, drop oldest connections
-                if user_conn_count > max_connections:
-                    print(f"User {username} has {user_conn_count} connections (limit: {max_connections})")
-                    
-                    # Drop excess connections (FIFO - we'll drop the first ones we find)
-                    excess = user_conn_count - max_connections
-                    for i in range(excess):
-                        if i < len(user_connections):
-                            conn_to_drop = user_connections[i]
-                            self.drop_connection(conn_to_drop)
-                            
-        finally:
-            db.close()
-            
-    def drop_connection(self, connection_key):
-        """Drop a specific connection using conntrack"""
-        try:
-            # connection_key format: "IP:PORT"
-            ip, port = connection_key.split(':')
-            subprocess.run(
-                f"conntrack -D -p udp --dport {port} --src {ip}",
-                shell=True, capture_output=True
-            )
-            print(f"Dropped connection: {connection_key}")
-        except Exception as e:
-            print(f"Error dropping connection {connection_key}: {e}")
-            
-    def start_monitoring(self):
-        """Start the connection monitoring loop"""
-        def monitor_loop():
-            while True:
-                try:
-                    self.enforce_connection_limits()
-                    time.sleep(10)  # Check every 10 seconds
-                except Exception as e:
-                    print(f"Monitoring error: {e}")
-                    time.sleep(30)
-                    
-        monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
-        monitor_thread.start()
-        
-# Global instance
-connection_manager = ConnectionManager()
-
-if __name__ == "__main__":
-    print("Starting Connection Manager...")
-    connection_manager.start_monitoring()
-    try:
-        while True:
-            time.sleep(60)
-    except KeyboardInterrupt:
-        print("Stopping Connection Manager...")
 PY
 
 # ===== systemd Services =====
@@ -663,6 +658,7 @@ cat >/etc/systemd/system/zivpn-connection.service <<'EOF'
 [Unit]
 Description=ZIVPN Connection Manager
 After=network.target zivpn.service
+Wants=zivpn.service
 
 [Service]
 Type=simple
@@ -671,6 +667,7 @@ WorkingDirectory=/etc/zivpn
 ExecStart=/usr/bin/python3 /etc/zivpn/connection_manager.py
 Restart=always
 RestartSec=5
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
@@ -750,11 +747,6 @@ iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 # UFW Rules
 ufw allow 1:65535/tcp >/dev/null 2>&1 || true
 ufw allow 1:65535/udp >/dev/null 2>&1 || true
-# ufw allow 22/tcp >/dev/null 2>&1 || true
-# ufw allow 5667/udp >/dev/null 2>&1 || true
-# ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-# ufw allow 19432/tcp >/dev/null 2>&1 || true
-# ufw allow 8081/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
 # ===== Final Setup =====
@@ -771,22 +763,20 @@ systemctl enable --now zivpn-connection.service
 systemctl enable --now zivpn-backup.timer
 systemctl enable --now zivpn-cleanup.timer
 
-# Initial setup
-python3 /etc/zivpn/backup.py
-python3 /etc/zivpn/cleanup.py
-systemctl restart zivpn.service
-
 # ===== Completion Message =====
 IP=$(hostname -I | awk '{print $1}')
 echo -e "\n$LINE\n${G}✅ ZIVPN Enterprise Edition Completed!${Z}"
 echo -e "${C}🌐 WEB PANEL:${Z} ${Y}http://$IP:19432${Z}"
-# echo -e "  ${C}Login:${Z} ${Y}$WEB_USER / $WEB_PASS${Z}"
 echo -e "\n${G}🔐 LOGIN CREDENTIALS${Z}"
 echo -e "  ${Y}• Username:${Z} ${Y}$WEB_USER${Z}"
 echo -e "  ${Y}• Password:${Z} ${Y}$WEB_PASS${Z}"
+echo -e "\n${M}🎯 ENHANCED FEATURES:${Z}"
+echo -e "  ${G}✅ Accurate Online/Offline Status${Z}"
+echo -e "  ${G}✅ Real-time Connection Tracking${Z}"
+echo -e "  ${G}✅ Enhanced Web Panel${Z}"
+echo -e "  ${G}✅ Telegram Bot Status Commands${Z}"
 echo -e "\n${M}📊 SERVICES STATUS:${Z}"
 echo -e "  ${Y}systemctl status zivpn-web${Z}      - Web Panel"
 echo -e "  ${Y}systemctl status zivpn-bot${Z}      - Telegram Bot"
 echo -e "  ${Y}systemctl status zivpn-connection${Z} - Connection Manager"
 echo -e "$LINE"
-
