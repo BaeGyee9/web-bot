@@ -9,6 +9,7 @@ import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
 from datetime import datetime, timedelta
 import statistics
 import requests
+import time
 
 # Configuration
 USERS_FILE = "/etc/zivpn/users.json"
@@ -16,7 +17,7 @@ CONFIG_FILE = "/etc/zivpn/config.json"
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
 LISTEN_FALLBACK = "5667"
 RECENT_SECONDS = 120
-LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/LOGO-URL/main/logo.png"
+LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
 
 # GitHub Template URL
 HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
@@ -177,6 +178,10 @@ ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
 
+# Connection tracking cache with timestamp
+connection_cache = {}
+CACHE_TIMEOUT = 30  # seconds
+
 # --- Utility Functions ---
 
 def get_db():
@@ -270,21 +275,78 @@ def get_listen_port_from_config():
     m=re.search(r":(\d+)$", listen) if listen else None
     return (m.group(1) if m else LISTEN_FALLBACK)
 
-def has_recent_udp_activity(port):
-    if not port: return False
+def get_active_connections_accurate():
+    """Get accurate active connections using conntrack with better filtering"""
+    current_time = time.time()
+    
+    # Check cache first
+    if 'connections' in connection_cache and current_time - connection_cache['timestamp'] < CACHE_TIMEOUT:
+        return connection_cache['connections']
+    
+    active_connections = {}
     try:
-        out=subprocess.run("conntrack -L -p udp 2>/dev/null | grep 'dport=%s\\b'"%port,
-                           shell=True, capture_output=True, text=True).stdout
-        return bool(out)
-    except Exception:
+        # Get all UDP connections on VPN port range
+        result = subprocess.run(
+            "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | grep -E '(ESTABLISHED|UNREPLIED)'",
+            shell=True, capture_output=True, text=True, timeout=10
+        )
+        
+        for line in result.stdout.split('\n'):
+            if not line.strip():
+                continue
+                
+            try:
+                # Parse conntrack output to get source IP and destination port
+                parts = line.split()
+                src_ip = None
+                dport = None
+                
+                for part in parts:
+                    if part.startswith('src='):
+                        src_ip = part.split('=')[1]
+                    elif part.startswith('dport='):
+                        dport = part.split('=')[1]
+                
+                if src_ip and dport:
+                    # Use port as key to track multiple connections per port
+                    active_connections[dport] = active_connections.get(dport, 0) + 1
+                    
+            except Exception as e:
+                print(f"Error parsing conntrack line: {e}")
+                continue
+                
+    except subprocess.TimeoutExpired:
+        print("Conntrack command timed out")
+    except Exception as e:
+        print(f"Error getting active connections: {e}")
+    
+    # Update cache
+    connection_cache['connections'] = active_connections
+    connection_cache['timestamp'] = current_time
+    
+    return active_connections
+
+def has_recent_udp_activity_accurate(port):
+    """Check if specific port has recent UDP activity"""
+    if not port:
         return False
+    
+    active_connections = get_active_connections_accurate()
+    port_str = str(port)
+    
+    # Check if this port has any active connections
+    return port_str in active_connections and active_connections[port_str] > 0
 
 def status_for_user(u, listen_port):
-    port=str(u.get("port",""))
-    check_port=port if port else listen_port
+    """Determine user status with accurate connection tracking"""
+    port = str(u.get("port", ""))
+    check_port = port if port else listen_port
 
-    if u.get('status') == 'suspended': return "suspended"
+    # Check suspended status first
+    if u.get('status') == 'suspended':
+        return "suspended"
 
+    # Check expiration
     expires_str = u.get("expires", "")
     is_expired = False
     if expires_str:
@@ -295,11 +357,14 @@ def status_for_user(u, listen_port):
         except ValueError:
             pass
 
-    if is_expired: return "Expired"
+    if is_expired:
+        return "expired"
 
-    if has_recent_udp_activity(check_port): return "Online"
+    # Check active connections using accurate method
+    if has_recent_udp_activity_accurate(check_port):
+        return "online"
     
-    return "Offline"
+    return "offline"
 
 def sync_config_passwords(mode="mirror"):
     db = get_db()
@@ -611,6 +676,17 @@ def update_user():
     
     return jsonify({"ok": False, "err": "Invalid data"})
 
+@app.route("/api/connections")
+def get_connections():
+    """API to get current active connections"""
+    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
+    
+    active_connections = get_active_connections_accurate()
+    return jsonify({
+        "active_connections": active_connections,
+        "total_connections": sum(active_connections.values())
+    })
+
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
+    web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
