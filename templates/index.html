@@ -2,7 +2,7 @@
 <html lang="{{lang}}">
 <head>
     <meta charset="utf-8">
-    <title>{{t.title}} - ZIVPN Enterprise</title>
+    <title>{{t.title}} - မောင်သုည</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta http-equiv="refresh" content="120">
     <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&display=swap" rel="stylesheet">
@@ -93,119 +93,6 @@ html,body{
     color: rgba(255,255,255,0.9);
     font-size: 0.9em;
     margin-top: 5px;
-}
-
-/* Real-time Stats */
-.realtime-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
-    margin: 20px 0;
-}
-
-.realtime-card {
-    background: var(--card);
-    padding: 20px;
-    border-radius: var(--radius);
-    text-align: center;
-    border-left: 4px solid var(--primary-btn);
-    box-shadow: var(--shadow);
-}
-
-.realtime-card.online {
-    border-left-color: var(--ok);
-}
-
-.realtime-card.offline {
-    border-left-color: var(--bad);
-}
-
-.realtime-card .value {
-    font-size: 2em;
-    font-weight: 900;
-    margin: 10px 0;
-}
-
-.realtime-card .label {
-    font-size: 0.9em;
-    color: var(--bd);
-    font-weight: 600;
-}
-
-/* Online Users Section */
-.online-users {
-    background: var(--card);
-    border-radius: var(--radius);
-    padding: 20px;
-    margin: 20px 0;
-    border: 1px solid var(--bd);
-}
-
-.online-users h3 {
-    margin: 0 0 15px 0;
-    color: var(--primary-btn);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.user-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 10px;
-}
-
-.user-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px;
-    background: var(--bg);
-    border-radius: var(--radius);
-    border: 1px solid var(--bd);
-}
-
-.user-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--gradient);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: bold;
-}
-
-.user-info {
-    flex: 1;
-}
-
-.user-name {
-    font-weight: bold;
-    margin-bottom: 2px;
-}
-
-.user-ip {
-    font-size: 0.8em;
-    color: var(--bd);
-}
-
-.user-status {
-    padding: 4px 8px;
-    border-radius: 12px;
-    font-size: 0.7em;
-    font-weight: bold;
-}
-
-.status-online {
-    background: var(--ok);
-    color: white;
-}
-
-.status-offline {
-    background: var(--bad);
-    color: white;
 }
 
 /* Bottom Navigation Bar */
@@ -684,10 +571,6 @@ tr:hover {
         gap: 12px;
     }
     
-    .realtime-stats {
-        grid-template-columns: 1fr 1fr;
-    }
-    
     .quick-actions {
         grid-template-columns: repeat(2, 1fr);
     }
@@ -708,10 +591,6 @@ tr:hover {
 
 @media (max-width: 480px) {
     .stats-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .realtime-stats {
         grid-template-columns: 1fr;
     }
     
@@ -762,52 +641,43 @@ tr:hover {
                 <img src="{{ logo }}" alt="ZIVPN" class="logo">
                 <h1>ZIVPN Enterprise</h1>
             </div>
-            <div class="subtitle">Enhanced Management System</div>
+            <div class="subtitle">Management System</div>
         </div>
     </header>
 
     <!-- Home Section -->
     <div id="home" class="content-section active">
-        <!-- Real-time Stats -->
-        <div class="realtime-stats">
-            <div class="realtime-card online">
-                <div class="value">{{ stats.online_users }}</div>
-                <div class="label">{{t.current_online}}</div>
-            </div>
-            <div class="realtime-card">
-                <div class="value">{{ stats.active_users }}</div>
-                <div class="label">{{t.active_users}}</div>
-            </div>
-            <div class="realtime-card">
-                <div class="value">{{ stats.total_users }}</div>
-                <div class="label">{{t.total_users}}</div>
-            </div>
-            <div class="realtime-card">
-                <div class="value">{{ stats.server_load }}%</div>
-                <div class="label">{{t.server_load}}</div>
-            </div>
-        </div>
-
-        <!-- Online Users -->
-        {% if real_time_data.online_users %}
-        <div class="online-users">
-            <h3><i class="fas fa-users"></i> {{t.current_online}} ({{ real_time_data.online_users|length }})</h3>
-            <div class="user-list">
-                {% for user in real_time_data.online_users %}
-                <div class="user-item">
-                    <div class="user-avatar">
-                        {{ user.username[0]|upper }}
-                    </div>
-                    <div class="user-info">
-                        <div class="user-name">{{ user.username }}</div>
-                        <div class="user-ip">{{ user.last_ip }}</div>
-                    </div>
-                    <div class="user-status status-online">ONLINE</div>
+        <!-- Stats Overview -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon" style="color:var(--primary-btn);">
+                    <i class="fas fa-users"></i>
                 </div>
-                {% endfor %}
+                <div class="stat-number">{{ stats.total_users }}</div>
+                <div class="stat-label">{{t.total_users}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="color:var(--ok);">
+                    <i class="fas fa-signal"></i>
+                </div>
+                <div class="stat-number">{{ stats.active_users }}</div>
+                <div class="stat-label">{{t.active_users}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="color:var(--delete-btn);">
+                    <i class="fas fa-database"></i>
+                </div>
+                <div class="stat-number">{{ stats.total_bandwidth }}</div>
+                <div class="stat-label">{{t.bandwidth_used}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="color:var(--unknown);">
+                    <i class="fas fa-server"></i>
+                </div>
+                <div class="stat-number">{{ stats.server_load }}%</div>
+                <div class="stat-label">{{t.server_load}}</div>
             </div>
         </div>
-        {% endif %}
 
         <!-- Quick Actions -->
         <div class="form-card">
@@ -840,10 +710,7 @@ tr:hover {
                 <div style="padding: 10px; border-bottom: 1px solid var(--bd); display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <strong>{{u.user}}</strong>
-                        <div style="font-size: 0.8em; color: var(--bd);">
-                            Port: {{u.port or 'Default'}} 
-                            {% if u.last_ip %}| IP: {{u.last_ip}}{% endif %}
-                        </div>
+                        <div style="font-size: 0.8em; color: var(--bd);">Port: {{u.port or 'Default'}}</div>
                     </div>
                     <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
                 </div>
@@ -872,25 +739,18 @@ tr:hover {
                         <th>{{t.password}}</th>
                         <th>{{t.expires}}</th>
                         <th>{{t.status}}</th>
-                        <th>Last IP</th>
                         <th>{{t.actions}}</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for u in users %}
                 <tr>
-                    <td>
-                        <strong>{{u.user}}</strong>
-                        {% if u.is_online %}
-                        <span class="pill pill-online" style="margin-left: 5px;">LIVE</span>
-                        {% endif %}
-                    </td>
+                    <td><strong>{{u.user}}</strong></td>
                     <td>{{u.password}}</td>
                     <td>{{u.expires or '-'}}</td>
                     <td>
                         <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
                     </td>
-                    <td>{{u.last_ip or '-'}}</td>
                     <td>
                         <div class="action-btns">
                             <button class="action-btn btn-danger" onclick="deleteUser('{{u.user}}')" title="Delete">
@@ -898,9 +758,6 @@ tr:hover {
                             </button>
                             <button class="action-btn btn-primary" onclick="editUser('{{u.user}}')" title="Edit">
                                 <i class="fas fa-edit"></i>
-                            </button>
-                            <button class="action-btn btn-success" onclick="userDetails('{{u.user}}')" title="Details">
-                                <i class="fas fa-info"></i>
                             </button>
                         </div>
                     </td>
@@ -1105,14 +962,17 @@ tr:hover {
 <script>
 // Navigation Functions
 function showSection(sectionId) {
+    // Hide all sections
     document.querySelectorAll('.content-section').forEach(section => {
         section.classList.remove('active');
     });
     
+    // Remove active class from all nav items
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
     });
     
+    // Show selected section and activate nav item
     document.getElementById(sectionId).classList.add('active');
     event.currentTarget.classList.add('active');
 }
@@ -1131,6 +991,7 @@ function changeTheme(theme) {
     document.body.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
     
+    // Update active state
     document.querySelectorAll('.theme-option').forEach(option => {
         option.classList.remove('active');
     });
@@ -1147,6 +1008,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const storedTheme = localStorage.getItem('theme') || 'dark';
     document.body.setAttribute('data-theme', storedTheme);
     
+    // Set active theme option
     document.querySelectorAll('.theme-option').forEach(option => {
         option.classList.remove('active');
         if (option.getAttribute('data-theme') === storedTheme) {
@@ -1197,10 +1059,6 @@ function editUser(username) {
             alert('Error: ' + e.message);
         });
     }
-}
-
-function userDetails(username) {
-    window.open('/api/user/' + username + '/details', '_blank');
 }
 
 // Bulk Action Function
@@ -1257,20 +1115,6 @@ function generateReport() {
             reportResults.innerHTML = '<div class="alert alert-error">Error loading report: ' + e.message + '</div>';
         });
 }
-
-// Real-time updates
-function refreshOnlineUsers() {
-    fetch('/api/realtime/connections')
-        .then(r => r.json())
-        .then(data => {
-            // Update online users display
-            console.log('Real-time data updated:', data);
-        })
-        .catch(e => console.error('Error fetching real-time data:', e));
-}
-
-// Refresh every 30 seconds
-setInterval(refreshOnlineUsers, 30000);
 
 // Close settings when clicking outside
 window.onclick = function(event) {
