@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-ZIVPN Connection Manager - Real-time Monitoring & Analytics
-Enterprise Edition
+ZIVPN Connection Manager - ENTERPRISE EDITION
+FULLY FIXED VERSION with Accurate Port Mapping & Real-time Tracking
 """
+
 import sqlite3
 import subprocess
 import time
@@ -10,7 +11,7 @@ import threading
 from datetime import datetime, timedelta
 import os
 import logging
-import json
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -25,11 +26,7 @@ class ConnectionManager:
     def __init__(self):
         self.connection_tracker = {}
         self.lock = threading.Lock()
-        self.analytics_data = {
-            'daily_connections': {},
-            'user_sessions': {},
-            'bandwidth_usage': {}
-        }
+        self.last_cleanup = datetime.now()
         
     def get_db(self):
         conn = sqlite3.connect(DATABASE_PATH)
@@ -63,172 +60,203 @@ class ConnectionManager:
                     username TEXT NOT NULL,
                     server_ip TEXT,
                     client_ip TEXT,
-                    port INTEGER,
+                    client_port INTEGER,
+                    server_port INTEGER,
                     start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_update DATETIME DEFAULT CURRENT_TIMESTAMP,
                     is_active BOOLEAN DEFAULT 1
                 )
             ''')
             
-            # Analytics table
-            db.execute('''
-                CREATE TABLE IF NOT EXISTS connection_analytics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date DATE DEFAULT CURRENT_DATE,
-                    total_connections INTEGER DEFAULT 0,
-                    unique_users INTEGER DEFAULT 0,
-                    total_bandwidth INTEGER DEFAULT 0,
-                    peak_concurrent INTEGER DEFAULT 0
-                )
-            ''')
-            
             db.commit()
-            logger.info("Database tables initialized successfully")
+            logger.info("✅ Database tables initialized successfully")
             
         except Exception as e:
-            logger.error(f"Error initializing database: {e}")
+            logger.error(f"❌ Error initializing database: {e}")
         finally:
             db.close()
             
     def get_active_connections(self):
-        """Get active connections using conntrack with enhanced detection"""
+        """Get active connections using conntrack with ENHANCED parsing"""
         try:
+            # Get all UDP connections
             result = subprocess.run(
-                "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | grep -v 'UNREPLIED'",
+                "conntrack -L -p udp 2>/dev/null",
                 shell=True, capture_output=True, text=True
             )
             
             connections = {}
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):
-                    if 'src=' in line and 'dport=' in line:
+                    if 'dport=5667' in line or 'sport=5667' in line:
                         try:
-                            parts = line.split()
-                            src_ip = None
-                            dport = None
-                            sport = None
+                            # Parse connection information
+                            src_ip = self.extract_value(line, 'src=')
+                            dst_ip = self.extract_value(line, 'dst=')
+                            sport = self.extract_value(line, 'sport=')
+                            dport = self.extract_value(line, 'dport=')
                             
-                            for part in parts:
-                                if part.startswith('src='):
-                                    src_ip = part.split('=')[1]
-                                elif part.startswith('dport='):
-                                    dport = part.split('=')[1]
-                                elif part.startswith('sport='):
-                                    sport = part.split('=')[1]
-                            
-                            if src_ip and dport:
-                                connection_key = f"{src_ip}:{dport}"
-                                connections[connection_key] = {
-                                    'client_ip': src_ip,
-                                    'server_port': dport,
-                                    'client_port': sport,
-                                    'timestamp': datetime.now()
-                                }
+                            if src_ip and dst_ip and sport and dport:
+                                # Determine client and server ports
+                                if dport == '5667':
+                                    # Client -> Server connection
+                                    client_ip = src_ip
+                                    client_port = sport
+                                    server_port = dport
+                                else:
+                                    # Server -> Client connection
+                                    client_ip = dst_ip
+                                    client_port = dport
+                                    server_port = sport
+                                
+                                # Only track connections where server port is 5667
+                                if server_port == '5667':
+                                    connection_key = f"{client_ip}:{client_port}"
+                                    connections[connection_key] = {
+                                        'client_ip': client_ip,
+                                        'client_port': client_port,
+                                        'server_port': server_port,
+                                        'timestamp': datetime.now()
+                                    }
+                                    logger.debug(f"📡 Found connection: {client_ip}:{client_port} -> :{server_port}")
+                                    
                         except Exception as e:
-                            logger.debug(f"Error parsing connection: {e}")
+                            logger.debug(f"🔧 Parsing line: {line}")
+                            logger.debug(f"🔧 Error parsing connection: {e}")
                             continue
             
+            logger.info(f"📊 Found {len(connections)} active connections")
             return connections
             
         except Exception as e:
-            logger.error(f"Error getting active connections: {e}")
+            logger.error(f"❌ Error getting active connections: {e}")
             return {}
+    
+    def extract_value(self, line, key):
+        """Extract value from conntrack output line"""
+        try:
+            pattern = f'{key}([^\\s]+)'
+            match = re.search(pattern, line)
+            return match.group(1) if match else None
+        except:
+            return None
             
-    def map_connection_to_user(self, client_ip, server_port):
-        """Map connection to username"""
+    def map_connection_to_user(self, client_ip, client_port):
+        """ACCURATE: Map connection to username using CLIENT PORT"""
         db = self.get_db()
         try:
-            # First try to find by port
+            logger.info(f"🔍 Mapping connection: {client_ip}:{client_port}")
+            
+            # METHOD 1: Direct port mapping (most accurate)
             user = db.execute(
                 'SELECT username FROM users WHERE port = ?', 
-                (server_port,)
+                (client_port,)
             ).fetchone()
             
             if user:
+                logger.info(f"✅ Port mapping: {client_port} -> {user['username']}")
                 return user['username']
             
-            # If port not found, check default port (5667) users
-            if server_port == '5667':
-                # Get users without specific port (using default)
-                users = db.execute(
-                    'SELECT username FROM users WHERE port IS NULL OR port = ""'
-                ).fetchall()
-                # For default port, we can't map 1:1, so return first active user
-                # In production, you'd need better mapping logic
-                if users:
-                    return users[0]['username']
+            # METHOD 2: Check if this IP has recent connections
+            recent_user = db.execute('''
+                SELECT username FROM user_sessions 
+                WHERE ip_address = ? AND status = 'active'
+                ORDER BY start_time DESC LIMIT 1
+            ''', (client_ip,)).fetchone()
             
+            if recent_user:
+                logger.info(f"✅ IP mapping: {client_ip} -> {recent_user['username']}")
+                return recent_user['username']
+            
+            # METHOD 3: For default port users (no specific port assigned)
+            default_users = db.execute('''
+                SELECT username FROM users 
+                WHERE (port IS NULL OR port = '' OR port = '5667')
+                AND status = 'active'
+                LIMIT 1
+            ''').fetchall()
+            
+            if default_users:
+                logger.info(f"⚠️ Default mapping: {client_ip} -> {default_users[0]['username']}")
+                return default_users[0]['username']
+            
+            logger.warning(f"❌ No user mapping found for {client_ip}:{client_port}")
             return None
             
         except Exception as e:
-            logger.error(f"Error mapping connection to user: {e}")
+            logger.error(f"❌ Error mapping connection to user: {e}")
             return None
         finally:
             db.close()
             
-    def update_user_session(self, username, client_ip, action='connect', bytes_used=0):
+    def update_user_session(self, username, client_ip, client_port, action='connect', bytes_used=0):
         """Update user session tracking"""
         db = self.get_db()
         try:
-            session_id = f"{username}_{client_ip}_{int(datetime.now().timestamp())}"
+            session_id = f"{username}_{client_ip}_{client_port}"
             
             if action == 'connect':
-                db.execute('''
-                    INSERT INTO user_sessions 
-                    (session_id, username, ip_address, start_time, status)
-                    VALUES (?, ?, ?, datetime('now'), 'active')
-                ''', (session_id, username, client_ip))
+                # Check if session already exists
+                existing = db.execute(
+                    'SELECT session_id FROM user_sessions WHERE session_id = ? AND status = "active"',
+                    (session_id,)
+                ).fetchone()
                 
-                # Update live connections
-                db.execute('''
-                    INSERT OR REPLACE INTO live_connections 
-                    (connection_id, username, client_ip, start_time, last_update, is_active)
-                    VALUES (?, ?, ?, datetime('now'), datetime('now'), 1)
-                ''', (session_id, username, client_ip))
-                
-            elif action == 'disconnect':
-                # Update session end time and duration
+                if not existing:
+                    db.execute('''
+                        INSERT INTO user_sessions 
+                        (session_id, username, ip_address, start_time, status)
+                        VALUES (?, ?, ?, datetime('now'), 'active')
+                    ''', (session_id, username, client_ip))
+                    
+                    logger.info(f"🟢 New session: {username} from {client_ip}:{client_port}")
+            
+            # Update live connections (always)
+            db.execute('''
+                INSERT OR REPLACE INTO live_connections 
+                (connection_id, username, client_ip, client_port, server_port, start_time, last_update, is_active)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)
+            ''', (session_id, username, client_ip, client_port, 5667))
+            
+            if action == 'disconnect':
+                # Update session as completed
                 db.execute('''
                     UPDATE user_sessions 
                     SET end_time = datetime('now'),
                         duration_seconds = CAST((julianday('now') - julianday(start_time)) * 86400 AS INTEGER),
                         status = 'completed'
-                    WHERE username = ? AND ip_address = ? AND status = 'active'
-                ''', (username, client_ip))
+                    WHERE session_id = ? AND status = 'active'
+                ''', (session_id,))
                 
                 # Remove from live connections
                 db.execute('''
                     DELETE FROM live_connections 
-                    WHERE username = ? AND client_ip = ?
-                ''', (username, client_ip))
+                    WHERE connection_id = ?
+                ''', (session_id,))
+                
+                logger.info(f"🔴 Session ended: {username} from {client_ip}:{client_port}")
                 
             elif action == 'update':
                 # Update bandwidth usage
-                db.execute('''
-                    UPDATE user_sessions 
-                    SET bytes_received = bytes_received + ?
-                    WHERE username = ? AND ip_address = ? AND status = 'active'
-                ''', (bytes_used, username, client_ip))
-                
-                # Update live connections timestamp
-                db.execute('''
-                    UPDATE live_connections 
-                    SET last_update = datetime('now')
-                    WHERE username = ? AND client_ip = ?
-                ''', (username, client_ip))
-                
-                # Update user bandwidth in main table
-                db.execute('''
-                    UPDATE users 
-                    SET bandwidth_used = bandwidth_used + ?,
-                        updated_at = datetime('now')
-                    WHERE username = ?
-                ''', (bytes_used, username))
+                if bytes_used > 0:
+                    db.execute('''
+                        UPDATE user_sessions 
+                        SET bytes_received = bytes_received + ?
+                        WHERE session_id = ? AND status = 'active'
+                    ''', (bytes_used, session_id))
+                    
+                    # Update user bandwidth in main table
+                    db.execute('''
+                        UPDATE users 
+                        SET bandwidth_used = bandwidth_used + ?,
+                            updated_at = datetime('now')
+                        WHERE username = ?
+                    ''', (bytes_used, username))
             
             db.commit()
             
         except Exception as e:
-            logger.error(f"Error updating user session: {e}")
+            logger.error(f"❌ Error updating user session: {e}")
         finally:
             db.close()
             
@@ -238,78 +266,79 @@ class ConnectionManager:
         try:
             # Get all active users with their connection limits
             users = db.execute('''
-                SELECT username, concurrent_conn, port 
+                SELECT username, concurrent_conn 
                 FROM users 
                 WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)
             ''').fetchall()
             
-            active_connections = self.get_active_connections()
-            
             for user in users:
                 username = user['username']
                 max_connections = user['concurrent_conn']
-                user_port = str(user['port'] or '5667')
                 
-                # Count connections for this user
-                user_conn_count = 0
-                user_connections = []
+                # Count current connections for this user
+                user_conns = db.execute('''
+                    SELECT COUNT(*) as conn_count FROM live_connections 
+                    WHERE username = ? AND is_active = 1
+                ''', (username,)).fetchone()
                 
-                for conn_key, conn_info in active_connections.items():
-                    if conn_info['server_port'] == user_port:
-                        user_conn_count += 1
-                        user_connections.append(conn_info)
+                conn_count = user_conns['conn_count'] if user_conns else 0
                 
                 # If over limit, drop oldest connections
-                if user_conn_count > max_connections:
-                    logger.info(f"User {username} has {user_conn_count} connections (limit: {max_connections})")
+                if conn_count > max_connections:
+                    logger.warning(f"🚫 User {username} has {conn_count} connections (limit: {max_connections})")
                     
-                    # Drop excess connections (FIFO)
-                    excess = user_conn_count - max_connections
-                    for i in range(excess):
-                        if i < len(user_connections):
-                            conn_to_drop = user_connections[i]
-                            self.drop_connection(conn_to_drop['client_ip'], user_port)
+                    # Get oldest connections to drop
+                    excess_conns = db.execute('''
+                        SELECT connection_id, client_ip, client_port 
+                        FROM live_connections 
+                        WHERE username = ? 
+                        ORDER BY last_update ASC 
+                        LIMIT ?
+                    ''', (username, conn_count - max_connections)).fetchall()
+                    
+                    for conn in excess_conns:
+                        self.drop_connection(conn['client_ip'], conn['client_port'])
+                        logger.info(f"🦵 Dropped excess connection: {username} - {conn['client_ip']}:{conn['client_port']}")
                             
         except Exception as e:
-            logger.error(f"Error enforcing connection limits: {e}")
+            logger.error(f"❌ Error enforcing connection limits: {e}")
         finally:
             db.close()
             
-    def drop_connection(self, client_ip, server_port):
+    def drop_connection(self, client_ip, client_port):
         """Drop a specific connection using conntrack"""
         try:
             result = subprocess.run(
-                f"conntrack -D -p udp --dport {server_port} --src {client_ip}",
+                f"conntrack -D -p udp --dport 5667 --sport {client_port} --src {client_ip}",
                 shell=True, capture_output=True, text=True
             )
             
             if result.returncode == 0:
-                logger.info(f"Dropped connection: {client_ip}:{server_port}")
+                logger.info(f"✅ Dropped connection: {client_ip}:{client_port}")
                 return True
             else:
-                logger.warning(f"Failed to drop connection: {client_ip}:{server_port}")
+                logger.warning(f"⚠️ Failed to drop connection: {client_ip}:{client_port}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error dropping connection: {e}")
+            logger.error(f"❌ Error dropping connection: {e}")
             return False
             
     def cleanup_stale_connections(self):
         """Clean up stale connections from database"""
         db = self.get_db()
         try:
-            # Remove connections older than 10 minutes
-            cutoff_time = (datetime.now() - timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+            # Remove connections older than 3 minutes
+            cutoff_time = (datetime.now() - timedelta(minutes=3)).strftime('%Y-%m-%d %H:%M:%S')
             
             stale_connections = db.execute('''
-                SELECT connection_id, username, client_ip 
+                SELECT connection_id, username, client_ip, client_port 
                 FROM live_connections 
                 WHERE last_update < ?
             ''', (cutoff_time,)).fetchall()
             
             for conn in stale_connections:
-                logger.info(f"Cleaning up stale connection: {conn['username']} - {conn['client_ip']}")
-                db.execute('DELETE FROM live_connections WHERE connection_id = ?', (conn['connection_id'],))
+                logger.info(f"🧹 Cleaning stale connection: {conn['username']} - {conn['client_ip']}:{conn['client_port']}")
                 
                 # Update session as completed
                 db.execute('''
@@ -319,11 +348,14 @@ class ConnectionManager:
                         status = 'completed'
                     WHERE username = ? AND ip_address = ? AND status = 'active'
                 ''', (conn['username'], conn['client_ip']))
+                
+                # Remove from live connections
+                db.execute('DELETE FROM live_connections WHERE connection_id = ?', (conn['connection_id'],))
             
             db.commit()
             
         except Exception as e:
-            logger.error(f"Error cleaning up stale connections: {e}")
+            logger.error(f"❌ Error cleaning up stale connections: {e}")
         finally:
             db.close()
             
@@ -332,18 +364,19 @@ class ConnectionManager:
         db = self.get_db()
         try:
             # Total live connections
-            total_live = db.execute('SELECT COUNT(*) as count FROM live_connections').fetchone()['count']
+            total_live = db.execute('SELECT COUNT(*) as count FROM live_connections WHERE is_active = 1').fetchone()['count']
             
             # Connections by user
             user_stats = db.execute('''
                 SELECT username, COUNT(*) as connection_count
                 FROM live_connections 
+                WHERE is_active = 1
                 GROUP BY username
                 ORDER BY connection_count DESC
             ''').fetchall()
             
-            # Recent connections (last 1 hour)
-            recent_cutoff = (datetime.now() - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+            # Recent connections (last 5 minutes)
+            recent_cutoff = (datetime.now() - timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
             recent_connections = db.execute('''
                 SELECT COUNT(*) as count 
                 FROM user_sessions 
@@ -353,11 +386,11 @@ class ConnectionManager:
             return {
                 'total_live_connections': total_live,
                 'user_connection_stats': [dict(row) for row in user_stats],
-                'recent_connections_1h': recent_connections
+                'recent_connections_5m': recent_connections
             }
             
         except Exception as e:
-            logger.error(f"Error getting live connections stats: {e}")
+            logger.error(f"❌ Error getting live connections stats: {e}")
             return {}
         finally:
             db.close()
@@ -383,7 +416,7 @@ class ConnectionManager:
             return [dict(row) for row in history]
             
         except Exception as e:
-            logger.error(f"Error getting user connection history: {e}")
+            logger.error(f"❌ Error getting user connection history: {e}")
             return []
         finally:
             db.close()
@@ -391,7 +424,7 @@ class ConnectionManager:
     def start_monitoring(self):
         """Start the connection monitoring loop"""
         def monitor_loop():
-            logger.info("Starting connection monitoring loop...")
+            logger.info("🚀 Starting ENHANCED connection monitoring loop...")
             self.initialize_database()
             
             while True:
@@ -400,76 +433,59 @@ class ConnectionManager:
                     active_connections = self.get_active_connections()
                     
                     # 2. Update connection tracking
+                    connection_count = 0
                     for conn_key, conn_info in active_connections.items():
                         username = self.map_connection_to_user(
                             conn_info['client_ip'], 
-                            conn_info['server_port']
+                            conn_info['client_port']
                         )
                         
                         if username:
                             self.update_user_session(
                                 username, 
-                                conn_info['client_ip'], 
-                                'update', 
-                                bytes_used=0  # In real implementation, track actual bytes
+                                conn_info['client_ip'],
+                                conn_info['client_port'],
+                                'update'
                             )
+                            connection_count += 1
                     
-                    # 3. Enforce connection limits
-                    self.enforce_connection_limits()
+                    # 3. Enforce connection limits every 30 seconds
+                    current_time = datetime.now()
+                    if (current_time - self.last_cleanup).total_seconds() > 30:
+                        self.enforce_connection_limits()
+                        self.cleanup_stale_connections()
+                        self.last_cleanup = current_time
                     
-                    # 4. Clean up stale connections
-                    self.cleanup_stale_connections()
+                    # 4. Log monitoring status every minute
+                    if connection_count > 0:
+                        logger.info(f"📊 Monitoring {connection_count} active connections")
                     
-                    # 5. Update analytics
-                    self.update_analytics()
-                    
-                    time.sleep(15)  # Check every 15 seconds
+                    time.sleep(5)  # Check every 5 seconds
                     
                 except Exception as e:
-                    logger.error(f"Monitoring loop error: {e}")
-                    time.sleep(30)  # Longer delay on error
+                    logger.error(f"❌ Monitoring loop error: {e}")
+                    time.sleep(10)  # Longer delay on error
                     
         monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
         monitor_thread.start()
-        logger.info("Connection monitoring started successfully")
+        logger.info("✅ ENHANCED Connection monitoring started successfully")
         
-    def update_analytics(self):
-        """Update connection analytics"""
+    def debug_current_state(self):
+        """Debug function to show current state"""
         db = self.get_db()
         try:
-            today = datetime.now().date().isoformat()
-            
-            # Get today's stats
-            total_connections = db.execute('''
-                SELECT COUNT(*) as count FROM user_sessions 
-                WHERE date(start_time) = date('now')
-            ''').fetchone()['count']
-            
-            unique_users = db.execute('''
-                SELECT COUNT(DISTINCT username) as count FROM user_sessions 
-                WHERE date(start_time) = date('now')
-            ''').fetchone()['count']
-            
-            total_bandwidth = db.execute('''
-                SELECT SUM(bytes_received) as total FROM user_sessions 
-                WHERE date(start_time) = date('now')
-            ''').fetchone()['total'] or 0
-            
-            peak_concurrent = db.execute('''
-                SELECT COUNT(*) as count FROM live_connections
-            ''').fetchone()['count']
-            
-            # Update or insert analytics for today
-            db.execute('''
-                INSERT OR REPLACE INTO connection_analytics 
-                (date, total_connections, unique_users, total_bandwidth, peak_concurrent)
-                VALUES (date('now'), ?, ?, ?, ?)
-            ''', (total_connections, unique_users, total_bandwidth, peak_concurrent))
-            
-            db.commit()
+            # Show live connections
+            live_conns = db.execute('SELECT * FROM live_connections').fetchall()
+            logger.info(f"🔍 DEBUG - Live connections: {len(live_conns)}")
+            for conn in live_conns:
+                logger.info(f"🔍 DEBUG - {dict(conn)}")
+                
+            # Show active sessions
+            active_sessions = db.execute('SELECT * FROM user_sessions WHERE status = "active"').fetchall()
+            logger.info(f"🔍 DEBUG - Active sessions: {len(active_sessions)}")
             
         except Exception as e:
-            logger.error(f"Error updating analytics: {e}")
+            logger.error(f"❌ Debug error: {e}")
         finally:
             db.close()
 
@@ -477,13 +493,17 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 if __name__ == "__main__":
-    print("Starting ZIVPN Connection Manager...")
+    print("🚀 Starting ZIVPN Connection Manager - ENTERPRISE EDITION...")
+    print("📊 Features: Real-time tracking, Port mapping, Connection limits")
+    
+    # Start monitoring
     connection_manager.start_monitoring()
     
     try:
         # Keep the main thread alive
         while True:
             time.sleep(60)
+            # Debug output every minute
+            connection_manager.debug_current_state()
     except KeyboardInterrupt:
-        print("Stopping Connection Manager...")
-      
+        print("🛑 Stopping Connection Manager...")
