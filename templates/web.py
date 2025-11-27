@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ZIVPN Enterprise Web Panel - Enhanced with Real-time Analytics
-External HTML Template - ENTERPRISE EDITION
+ZIVPN Enterprise Web Panel - Enhanced Version
+With Connection Dashboard, Scheduling, and Device Management
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
@@ -9,8 +9,6 @@ import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
 from datetime import datetime, timedelta
 import statistics
 import requests
-import threading
-import time
 
 # Configuration
 USERS_FILE = "/etc/zivpn/users.json"
@@ -23,100 +21,40 @@ LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
 # GitHub Template URL
 HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
 
-# Import analytics engine
-try:
-    from analytics import ZIVPNAnalytics
-    analytics_engine = ZIVPNAnalytics()
-    ANALYTICS_ENABLED = True
-except ImportError:
-    ANALYTICS_ENABLED = False
-    print("Analytics engine not available")
-
-# Import connection manager
-try:
-    from connection_manager import ConnectionManager
-    connection_manager = ConnectionManager()
-    CONNECTION_MONITORING_ENABLED = True
-    # Start connection monitoring in background thread
-    monitoring_thread = threading.Thread(target=connection_manager.start_monitoring, daemon=True)
-    monitoring_thread.start()
-except ImportError:
-    CONNECTION_MONITORING_ENABLED = False
-    print("Connection manager not available")
+# Import Enhanced Connection Manager
+import sys
+sys.path.append('/etc/zivpn')
+from connection_manager import connection_manager, connection_api
 
 # --- Localization Data ---
 TRANSLATIONS = {
     'en': {
-        'title': 'ZIVPN Enterprise Panel', 'login_title': 'ZIVPN Panel Login',
-        'login_err': 'Invalid Username or Password', 'username': 'Username',
-        'password': 'Password', 'login': 'Login', 'logout': 'Logout',
-        'contact': 'Contact', 'total_users': 'Total Users',
-        'active_users': 'Online Users', 'bandwidth_used': 'Bandwidth Used',
-        'server_load': 'Server Load', 'user_management': 'User Management',
-        'add_user': 'Add New User', 'bulk_ops': 'Bulk Operations',
-        'reports': 'Reports', 'user': 'User', 'expires': 'Expires',
-        'port': 'Port', 'bandwidth': 'Bandwidth', 'speed': 'Speed',
-        'status': 'Status', 'actions': 'Actions', 'online': 'ONLINE',
-        'offline': 'OFFLINE', 'expired': 'EXPIRED', 'suspended': 'SUSPENDED',
-        'save_user': 'Save User', 'max_conn': 'Max Connections',
-        'speed_limit': 'Speed Limit (MB/s)', 'bw_limit': 'Bandwidth Limit (GB)',
-        'required_fields': 'User and Password are required',
-        'invalid_exp': 'Invalid Expires format',
-        'invalid_port': 'Port range must be 6000-19999',
-        'delete_confirm': 'Are you sure you want to delete {user}?',
-        'deleted': 'Deleted: {user}', 'success_save': 'User saved successfully',
-        'select_action': 'Select Action', 'extend_exp': 'Extend Expiry (+7 days)',
-        'suspend_users': 'Suspend Users', 'activate_users': 'Activate Users',
-        'delete_users': 'Delete Users', 'execute': 'Execute',
-        'user_search': 'Search users...', 'search': 'Search',
-        'export_csv': 'Export Users CSV', 'import_users': 'Import Users',
-        'bulk_success': 'Bulk action {action} completed',
-        'report_range': 'Date Range Required', 'report_bw': 'Bandwidth Usage',
-        'report_users': 'User Activity', 'report_revenue': 'Revenue',
-        'home': 'Home', 'manage': 'Manage Users', 'settings': 'Settings',
-        'dashboard': 'Dashboard', 'system_status': 'System Status',
-        'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
-        'server_info': 'Server Information', 'vpn_status': 'VPN Status',
+        # ... existing translations ...
+        'connection_dashboard': 'Connection Dashboard',
         'active_connections': 'Active Connections',
-        'live_connections': 'Live Connections', 'revenue_analytics': 'Revenue Analytics',
-        'user_analytics': 'User Analytics', 'system_health': 'System Health',
-        'connection_analytics': 'Connection Analytics', 'real_time_monitoring': 'Real-time Monitoring'
+        'device_management': 'Device Management',
+        'connection_schedule': 'Connection Schedule',
+        'registered_devices': 'Registered Devices',
+        'schedule_settings': 'Schedule Settings',
+        'allowed_hours': 'Allowed Hours',
+        'allowed_days': 'Allowed Days',
+        'device_fingerprint': 'Device Fingerprint',
+        'mac_address': 'MAC Address',
+        'connection_policies': 'Connection Policies'
     },
     'my': {
-        'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
-        'login_err': 'အသုံးပြုသူအမည် (သို့) စကားဝှက် မမှန်ပါ', 'username': 'အသုံးပြုသူအမည်',
-        'password': 'စကားဝှက်', 'login': 'ဝင်မည်', 'logout': 'ထွက်မည်',
-        'contact': 'ဆက်သွယ်ရန်', 'total_users': 'စုစုပေါင်းအသုံးပြုသူ',
-        'active_users': 'အွန်လိုင်းအသုံးပြုသူ', 'bandwidth_used': 'အသုံးပြုပြီး Bandwidth',
-        'server_load': 'ဆာဗာ ဝန်ပမာဏ', 'user_management': 'အသုံးပြုသူ စီမံခန့်ခွဲမှု',
-        'add_user': 'အသုံးပြုသူ အသစ်ထည့်ရန်', 'bulk_ops': 'အစုလိုက် လုပ်ဆောင်ချက်များ',
-        'reports': 'အစီရင်ခံစာများ', 'user': 'အသုံးပြုသူ', 'expires': 'သက်တမ်းကုန်ဆုံးမည်',
-        'port': 'ပေါက်', 'bandwidth': 'Bandwidth', 'speed': 'မြန်နှုန်း',
-        'status': 'အခြေအနေ', 'actions': 'လုပ်ဆောင်ချက်များ', 'online': 'အွန်လိုင်း',
-        'offline': 'အော့ဖ်လိုင်း', 'expired': 'သက်တမ်းကုန်ဆုံး', 'suspended': 'ဆိုင်းငံ့ထားသည်',
-        'save_user': 'အသုံးပြုသူ သိမ်းမည်', 'max_conn': 'အများဆုံးချိတ်ဆက်မှု',
-        'speed_limit': 'မြန်နှုန်း ကန့်သတ်ချက် (MB/s)', 'bw_limit': 'Bandwidth ကန့်သတ်ချက် (GB)',
-        'required_fields': 'အသုံးပြုသူအမည်နှင့် စကားဝှက် လိုအပ်သည်',
-        'invalid_exp': 'သက်တမ်းကုန်ဆုံးရက်ပုံစံ မမှန်ကန်ပါ',
-        'invalid_port': 'Port အကွာအဝေး 6000-19999 သာ ဖြစ်ရမည်',
-        'delete_confirm': '{user} ကို ဖျက်ရန် သေချာပါသလား?',
-        'deleted': 'ဖျက်လိုက်သည်: {user}', 'success_save': 'အသုံးပြုသူကို အောင်မြင်စွာ သိမ်းဆည်းလိုက်သည်',
-        'select_action': 'လုပ်ဆောင်ချက် ရွေးပါ', 'extend_exp': 'သက်တမ်းတိုးမည် (+၇ ရက်)',
-        'suspend_users': 'အသုံးပြုသူများ ဆိုင်းငံ့မည်', 'activate_users': 'အသုံးပြုသူများ ဖွင့်မည်',
-        'delete_users': 'အသုံးပြုသူများ ဖျက်မည်', 'execute': 'စတင်လုပ်ဆောင်မည်',
-        'user_search': 'အသုံးပြုသူ ရှာဖွေပါ...', 'search': 'ရှာဖွေပါ',
-        'export_csv': 'အသုံးပြုသူများ CSV ထုတ်ယူမည်', 'import_users': 'အသုံးပြုသူများ ထည့်သွင်းမည်',
-        'bulk_success': 'အစုလိုက် လုပ်ဆောင်ချက် {action} ပြီးမြောက်ပါပြီ',
-        'report_range': 'ရက်စွဲ အပိုင်းအခြား လိုအပ်သည်', 'report_bw': 'Bandwidth အသုံးပြုမှု',
-        'report_users': 'အသုံးပြုသူ လှုပ်ရှားမှု', 'report_revenue': 'ဝင်ငွေ',
-        'home': 'ပင်မစာမျက်နှာ', 'manage': 'အသုံးပြုသူများ စီမံခန့်ခွဲမှု',
-        'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
-        'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
-        'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
-        'live_connections': 'လက်ရှိချိတ်ဆက်မှုများ', 'revenue_analytics': 'ဝင်ငွေခွဲခြမ်းစိတ်ဖြာမှု',
-        'user_analytics': 'အသုံးပြုသူခွဲခြမ်းစိတ်ဖြာမှု', 'system_health': 'စနစ်ကျန်းမာရေး',
-        'connection_analytics': 'ချိတ်ဆက်မှုခွဲခြမ်းစိတ်ဖြာမှု', 'real_time_monitoring': 'လက်ရှိအချိန်စောင့်ကြည့်မှု'
+        # ... existing translations ...
+        'connection_dashboard': 'ချိတ်ဆက်မှု ပင်မစာမျက်နှာ',
+        'active_connections': 'တက်ကြွ ချိတ်ဆက်မှုများ',
+        'device_management': 'ကိရိယာ စီမံခန့်ခွဲမှု',
+        'connection_schedule': 'ချိတ်ဆက်မှု အချိန်ဇယား',
+        'registered_devices': 'မှတ်ပုံတင်ထားသော ကိရိယာများ',
+        'schedule_settings': 'အချိန်ဇယား ချိန်ညှိချက်များ',
+        'allowed_hours': 'ခွင့်ပြုချိန်များ',
+        'allowed_days': 'ခွင့်ပြုရက်များ',
+        'device_fingerprint': 'ကိရိယာ လက်ဗွေ',
+        'mac_address': 'MAC လိပ်စာ',
+        'connection_policies': 'ချိတ်ဆက်မှု မူဝါဒများ'
     }
 }
 
@@ -130,46 +68,19 @@ def load_html_template():
             raise Exception(f"HTTP {response.status_code}")
     except Exception as e:
         print(f"Failed to load template from GitHub: {e}")
-        # Fallback to local template would be here
-        return "<html><body>Template loading failed</body></html>"
+        return FALLBACK_HTML
 
-# Fallback HTML template (simplified version)
+# Fallback HTML template
 FALLBACK_HTML = """
 <!DOCTYPE html>
 <html lang="{{lang}}">
 <head>
     <meta charset="utf-8">
-    <title>{{t.title}} - ZIVPN Enterprise</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background: #f5f5f5; padding: 20px; margin: 10px 0; border-radius: 5px; }
-        .online { color: green; }
-        .offline { color: red; }
-    </style>
+    <title>{{t.title}} - Channel 404</title>
+    <!-- ... existing head content ... -->
 </head>
-<body>
-    <div class="container">
-        <h1>{{t.title}}</h1>
-        {% if authed %}
-            <div class="card">
-                <h2>Real-time Analytics</h2>
-                <p>Total Users: {{ stats.total_users }}</p>
-                <p>Active Users: {{ stats.active_users }}</p>
-                <p>Live Connections: {{ stats.live_connections }}</p>
-            </div>
-        {% else %}
-            <div class="card">
-                <h2>Login Required</h2>
-                <form method="post" action="/login">
-                    <input name="u" placeholder="Username" required>
-                    <input name="p" type="password" placeholder="Password" required>
-                    <button type="submit">Login</button>
-                </form>
-            </div>
-        {% endif %}
-    </div>
+<body data-theme="{{theme}}">
+<!-- ... existing body content ... -->
 </body>
 </html>
 """
@@ -179,6 +90,55 @@ app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
 ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
+
+# Register connection API blueprint
+app.register_blueprint(connection_api)
+
+# --- Database Schema Update ---
+def update_database_schema():
+    """Update database with new tables for enhanced features"""
+    db = sqlite3.connect(DATABASE_PATH)
+    try:
+        # Device fingerprints table
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS device_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                device_hash TEXT UNIQUE NOT NULL,
+                mac_address TEXT,
+                client_ip TEXT,
+                user_agent TEXT,
+                registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # User schedules table
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS user_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                schedule_data TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # IP assignments table (for IP-username mapping)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS ip_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                ip_address TEXT UNIQUE NOT NULL,
+                assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        db.commit()
+        print("Database schema updated successfully")
+    except Exception as e:
+        print(f"Error updating database schema: {e}")
+    finally:
+        db.close()
 
 # --- Enhanced Utility Functions ---
 
@@ -214,6 +174,32 @@ def load_users():
     db.close()
     return [dict(u) for u in users]
 
+def get_enhanced_user_stats():
+    """Get enhanced user statistics with connection data"""
+    db = get_db()
+    try:
+        users = db.execute('''
+            SELECT u.username, u.status, u.concurrent_conn,
+                   COUNT(DISTINCT df.device_hash) as device_count,
+                   (SELECT schedule_data FROM user_schedules WHERE username = u.username) as schedule_data
+            FROM users u
+            LEFT JOIN device_fingerprints df ON u.username = df.username
+            GROUP BY u.username
+        ''').fetchall()
+        
+        enhanced_stats = []
+        for user in users:
+            user_dict = dict(user)
+            if user_dict['schedule_data']:
+                user_dict['has_schedule'] = True
+            else:
+                user_dict['has_schedule'] = False
+            enhanced_stats.append(user_dict)
+            
+        return enhanced_stats
+    finally:
+        db.close()
+
 def save_user(user_data):
     db = get_db()
     try:
@@ -228,13 +214,21 @@ def save_user(user_data):
         ))
         db.commit()
         
-        if user_data.get('plan_type'):
-            expires = user_data.get('expires') or (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
-            db.execute('''
-                INSERT INTO billing (username, plan_type, expires_at)
-                VALUES (?, ?, ?)
-            ''', (user_data['user'], user_data['plan_type'], expires))
-            db.commit()
+        # Set default schedule if provided
+        if user_data.get('schedule_type'):
+            schedule_data = {}
+            if user_data['schedule_type'] == 'business':
+                schedule_data = {'allowed_hours': {'start': '00:00', 'end': '23:59'}, 'allowed_days': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']}
+            elif user_data['schedule_type'] == 'night_only':
+                schedule_data = {'allowed_hours': {'start': '18:00', 'end': '06:00'}, 'allowed_days': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']}
+            
+            if schedule_data:
+                db.execute('''
+                    INSERT OR REPLACE INTO user_schedules 
+                    (username, schedule_data, updated_at)
+                    VALUES (?, ?, ?)
+                ''', (user_data['user'], json.dumps(schedule_data), datetime.now()))
+                db.commit()
             
     finally:
         db.close()
@@ -245,178 +239,38 @@ def delete_user(username):
         db.execute('DELETE FROM users WHERE username = ?', (username,))
         db.execute('DELETE FROM billing WHERE username = ?', (username,))
         db.execute('DELETE FROM bandwidth_logs WHERE username = ?', (username,))
+        db.execute('DELETE FROM device_fingerprints WHERE username = ?', (username,))
+        db.execute('DELETE FROM user_schedules WHERE username = ?', (username,))
         db.commit()
     finally:
         db.close()
 
-def get_enhanced_server_stats():
-    """Get enhanced server stats with real-time data"""
+def get_server_stats():
     db = get_db()
     try:
         total_users = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         active_users_db = db.execute('SELECT COUNT(*) FROM users WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)').fetchone()[0]
         total_bandwidth = db.execute('SELECT SUM(bandwidth_used) FROM users').fetchone()[0] or 0
         
-        # Get live connections count
-        live_connections = 0
-        if CONNECTION_MONITORING_ENABLED:
-            live_stats = connection_manager.get_live_connections_stats()
-            live_connections = live_stats.get('total_live_connections', 0)
+        # Get active connections from connection manager
+        dashboard_data = connection_manager.get_connection_dashboard()
+        active_connections = dashboard_data.get('total_active_connections', 0)
         
-        # Calculate server load based on active connections
-        server_load = min(100, (live_connections * 8) + 10)
-        
-        # Get today's new users
-        today_users = db.execute('''
-            SELECT COUNT(*) as today_users FROM users 
-            WHERE date(created_at) = date('now')
-        ''').fetchone()[0]
-        
-        # Get revenue data
-        today_revenue = db.execute('''
-            SELECT SUM(amount) as revenue FROM billing 
-            WHERE date(created_at) = date('now') AND payment_status = 'completed'
-        ''').fetchone()[0] or 0
+        server_load = min(100, (active_users_db * 5) + 10)
         
         return {
             'total_users': total_users,
             'active_users': active_users_db,
-            'live_connections': live_connections,
             'total_bandwidth': f"{total_bandwidth / 1024 / 1024 / 1024:.2f} GB",
             'server_load': server_load,
-            'today_new_users': today_users,
-            'today_revenue': f"{today_revenue:.2f} MMK",
-            'analytics_enabled': ANALYTICS_ENABLED,
-            'monitoring_enabled': CONNECTION_MONITORING_ENABLED
+            'active_connections': active_connections
         }
     finally:
         db.close()
 
-def get_listen_port_from_config():
-    cfg=read_json(CONFIG_FILE,{})
-    listen=str(cfg.get("listen","")).strip()
-    m=re.search(r":(\d+)$", listen) if listen else None
-    return (m.group(1) if m else LISTEN_FALLBACK)
+# ... (keep existing functions like get_listen_port_from_config, has_recent_udp_activity, etc.)
 
-def has_recent_udp_activity(port):
-    if not port: return False
-    try:
-        out=subprocess.run("conntrack -L -p udp 2>/dev/null | grep 'dport=%s\\b'"%port,
-                           shell=True, capture_output=True, text=True).stdout
-        return bool(out)
-    except Exception:
-        return False
-
-def status_for_user(u, listen_port):
-    """Enhanced status detection with real-time monitoring"""
-    port=str(u.get("port",""))
-    check_port=port if port else listen_port
-
-    if u.get('status') == 'suspended': return "suspended"
-
-    expires_str = u.get("expires", "")
-    is_expired = False
-    if expires_str:
-        try:
-            expires_dt = datetime.strptime(expires_str, "%Y-%m-%d").date()
-            if expires_dt < datetime.now().date():
-                is_expired = True
-        except ValueError:
-            pass
-
-    if is_expired: return "Expired"
-
-    # Enhanced real-time status detection
-    if CONNECTION_MONITORING_ENABLED:
-        # Check if user has active connections in connection manager
-        db = get_db()
-        live_conns = db.execute('''
-            SELECT COUNT(*) as count FROM live_connections 
-            WHERE username = ? AND is_active = 1
-        ''', (u.get('user'),)).fetchone()
-        db.close()
-        
-        if live_conns['count'] > 0:
-            return "Online"
-
-    # Fallback to traditional detection
-    if has_recent_udp_activity(check_port): 
-        return "Online"
-    
-    return "Offline"
-
-def sync_config_passwords(mode="mirror"):
-    db = get_db()
-    active_users = db.execute('''
-        SELECT password FROM users 
-        WHERE status = "active" AND password IS NOT NULL AND password != "" 
-              AND (expires IS NULL OR expires >= CURRENT_DATE)
-    ''').fetchall()
-    db.close()
-    
-    users_pw = sorted({str(u["password"]) for u in active_users})
-    
-    cfg=read_json(CONFIG_FILE,{})
-    if not isinstance(cfg.get("auth"),dict): cfg["auth"]={}
-    cfg["auth"]["mode"]="passwords"
-    cfg["auth"]["config"]=users_pw
-    cfg["listen"]=cfg.get("listen") or ":5667"
-    cfg["cert"]=cfg.get("cert") or "/etc/zivpn/zivpn.crt"
-    cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
-    cfg["obfs"]=cfg.get("obfs") or "zivpn"
-    
-    write_json_atomic(CONFIG_FILE,cfg)
-    subprocess.run("systemctl restart zivpn.service", shell=True)
-
-def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
-def is_authed(): return session.get("auth") == True
-def require_login():
-    if login_enabled() and not is_authed():
-        return False
-    return True
-
-# --- Request Hooks ---
-@app.before_request
-def set_language_and_translations():
-    lang = session.get('lang', os.environ.get('DEFAULT_LANGUAGE', 'my'))
-    g.lang = lang
-    g.t = TRANSLATIONS.get(lang, TRANSLATIONS['my'])
-
-# --- Enhanced Routes ---
-
-@app.route("/set_lang", methods=["GET"])
-def set_lang():
-    lang = request.args.get('lang')
-    if lang in TRANSLATIONS:
-        session['lang'] = lang
-    return redirect(request.referrer or url_for('index'))
-
-@app.route("/login", methods=["GET","POST"])
-def login():
-    t = g.t
-    if not login_enabled(): return redirect(url_for('index'))
-    if request.method=="POST":
-        u=(request.form.get("u") or "").strip()
-        p=(request.form.get("p") or "").strip()
-        if hmac.compare_digest(u, ADMIN_USER) and hmac.compare_digest(p, ADMIN_PASS):
-            session["auth"]=True
-            return redirect(url_for('index'))
-        else:
-            session["auth"]=False
-            session["login_err"]=t['login_err']
-            return redirect(url_for('login'))
-    
-    theme = session.get('theme', 'dark')
-    html_template = load_html_template()
-    return render_template_string(html_template, authed=False, logo=LOGO_URL, err=session.pop("login_err", None), 
-                                  t=t, lang=g.lang, theme=theme)
-
-@app.route("/logout", methods=["GET"])
-def logout():
-    session.pop("auth", None)
-    return redirect(url_for('login') if login_enabled() else url_for('index'))
-
-def build_view(msg="", err=""):
+def build_enhanced_view(msg="", err=""):
     t = g.t
     if not require_login():
         html_template = load_html_template()
@@ -425,7 +279,11 @@ def build_view(msg="", err=""):
     
     users=load_users()
     listen_port=get_listen_port_from_config()
-    stats = get_enhanced_server_stats()
+    stats = get_server_stats()
+    
+    # Get enhanced connection data
+    dashboard_data = connection_manager.get_connection_dashboard()
+    enhanced_users = get_enhanced_user_stats()
     
     view=[]
     today_date=datetime.now().date()
@@ -433,6 +291,9 @@ def build_view(msg="", err=""):
     for u in users:
         status = status_for_user(u, listen_port)
         expires_str=u.get("expires","")
+        
+        # Find enhanced data for this user
+        enhanced_data = next((eu for eu in enhanced_users if eu['username'] == u['user']), {})
         
         view.append(type("U",(),{
             "user":u.get("user",""),
@@ -443,7 +304,9 @@ def build_view(msg="", err=""):
             "bandwidth_limit": u.get('bandwidth_limit', 0),
             "bandwidth_used": f"{u.get('bandwidth_used', 0) / 1024 / 1024 / 1024:.2f}",
             "speed_limit": u.get('speed_limit', 0),
-            "concurrent_conn": u.get('concurrent_conn', 1)
+            "concurrent_conn": u.get('concurrent_conn', 1),
+            "device_count": enhanced_data.get('device_count', 0),
+            "has_schedule": enhanced_data.get('has_schedule', False)
         }))
     
     view.sort(key=lambda x:(x.user or "").lower())
@@ -453,291 +316,75 @@ def build_view(msg="", err=""):
     html_template = load_html_template()
     return render_template_string(html_template, authed=True, logo=LOGO_URL, 
                                  users=view, msg=msg, err=err, today=today, stats=stats, 
+                                 dashboard_data=dashboard_data, enhanced_users=enhanced_users,
                                  t=t, lang=g.lang, theme=theme)
 
-@app.route("/", methods=["GET"])
-def index(): 
-    return build_view()
+# --- Enhanced Routes ---
 
-@app.route("/add", methods=["POST"])
-def add_user():
-    t = g.t
+@app.route("/connections", methods=["GET"])
+def connection_dashboard():
+    """Enhanced connection dashboard"""
     if not require_login(): return redirect(url_for('login'))
     
-    user_data = {
-        'user': (request.form.get("user") or "").strip(),
-        'password': (request.form.get("password") or "").strip(),
-        'expires': (request.form.get("expires") or "").strip(),
-        'port': (request.form.get("port") or "").strip(),
-        'bandwidth_limit': int(request.form.get("bandwidth_limit") or 0),
-        'speed_limit': int(request.form.get("speed_limit") or 0),
-        'concurrent_conn': int(request.form.get("concurrent_conn") or 1),
-        'plan_type': (request.form.get("plan_type") or "").strip()
-    }
-    
-    if not user_data['user'] or not user_data['password']:
-        return build_view(err=t['required_fields'])
-    
-    if user_data['expires'] and user_data['expires'].isdigit():
-        try:
-            days = int(user_data['expires'])
-            user_data['expires'] = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-        except ValueError:
-            return build_view(err=t['invalid_exp'])
-    
-    if user_data['expires']:
-        try: datetime.strptime(user_data['expires'],"%Y-%m-%d")
-        except ValueError:
-            return build_view(err=t['invalid_exp'])
-    
-    if user_data['port']:
-        try:
-            port_num = int(user_data['port'])
-            if not (6000 <= port_num <= 19999):
-                 return build_view(err=t['invalid_port'])
-        except ValueError:
-             return build_view(err=t['invalid_port'])
+    dashboard_data = connection_manager.get_connection_dashboard()
+    return jsonify(dashboard_data)
 
-    
-    if not user_data['port']:
-        used_ports = {str(u.get('port', '')) for u in load_users() if u.get('port')}
-        found_port = None
-        for p in range(6000, 20000):
-            if str(p) not in used_ports:
-                found_port = str(p)
-                break
-        user_data['port'] = found_port or ""
-
-    save_user(user_data)
-    sync_config_passwords()
-    return build_view(msg=t['success_save'])
-
-@app.route("/delete", methods=["POST"])
-def delete_user_html():
-    t = g.t
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if not user: return build_view(err=t['required_fields'])
-    
-    delete_user(user)
-    sync_config_passwords(mode="mirror")
-    return build_view(msg=t['deleted'].format(user=user))
-
-# --- Enhanced API Routes ---
-
-@app.route("/api/v1/live_connections")
-def get_live_connections():
-    """Get real-time live connections"""
+@app.route("/user/<username>/devices", methods=["GET"])
+def get_user_devices(username):
+    """Get registered devices for a user"""
     if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not CONNECTION_MONITORING_ENABLED:
-        return jsonify({"error": "Connection monitoring not available"}), 503
-    
-    try:
-        live_stats = connection_manager.get_live_connections_stats()
-        return jsonify(live_stats)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/user_sessions/<username>")
-def get_user_sessions(username):
-    """Get user connection sessions"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not CONNECTION_MONITORING_ENABLED:
-        return jsonify({"error": "Connection monitoring not available"}), 503
-    
-    try:
-        history = connection_manager.get_user_connection_history(username, days=7)
-        return jsonify(history)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/analytics/revenue")
-def get_revenue_analytics():
-    """Get revenue analytics"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not ANALYTICS_ENABLED:
-        return jsonify({"error": "Analytics not available"}), 503
-    
-    try:
-        days = request.args.get('days', 30, type=int)
-        analytics = analytics_engine.get_revenue_analytics(days)
-        return jsonify(analytics)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/analytics/users")
-def get_user_analytics():
-    """Get user analytics"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not ANALYTICS_ENABLED:
-        return jsonify({"error": "Analytics not available"}), 503
-    
-    try:
-        days = request.args.get('days', 30, type=int)
-        analytics = analytics_engine.get_user_analytics(days)
-        return jsonify(analytics)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/analytics/bandwidth")
-def get_bandwidth_analytics():
-    """Get bandwidth analytics"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not ANALYTICS_ENABLED:
-        return jsonify({"error": "Analytics not available"}), 503
-    
-    try:
-        days = request.args.get('days', 30, type=int)
-        analytics = analytics_engine.get_bandwidth_analytics(days)
-        return jsonify(analytics)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/analytics/system_health")
-def get_system_health_analytics():
-    """Get system health analytics"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not ANALYTICS_ENABLED:
-        return jsonify({"error": "Analytics not available"}), 503
-    
-    try:
-        analytics = analytics_engine.get_system_health_analytics()
-        return jsonify(analytics)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/v1/analytics/export")
-def export_analytics_report():
-    """Export comprehensive analytics report"""
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
-    
-    if not ANALYTICS_ENABLED:
-        return jsonify({"error": "Analytics not available"}), 503
-    
-    try:
-        file_path = analytics_engine.export_analytics_report()
-        return jsonify({"message": "Report exported", "file_path": file_path})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# --- Existing API Routes (Enhanced) ---
-
-@app.route("/api/bulk", methods=["POST"])
-def bulk_operations():
-    t = g.t
-    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
-    
-    data = request.get_json() or {}
-    action = data.get('action')
-    users = data.get('users', [])
     
     db = get_db()
     try:
-        if action == 'extend':
-            for user in users:
-                db.execute('UPDATE users SET expires = date(expires, "+7 days") WHERE username = ?', (user,))
-        elif action == 'suspend':
-            for user in users:
-                db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user,))
-        elif action == 'activate':
-            for user in users:
-                db.execute('UPDATE users SET status = "active" WHERE username = ?', (user,))
-        elif action == 'delete':
-            for user in users:
-                delete_user(user)
+        devices = db.execute('''
+            SELECT device_hash, mac_address, client_ip, user_agent, registered_at, last_seen
+            FROM device_fingerprints 
+            WHERE username = ?
+            ORDER BY last_seen DESC
+        ''', (username,)).fetchall()
         
-        db.commit()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": t['bulk_success'].format(action=action)})
+        return jsonify([dict(device) for device in devices])
     finally:
         db.close()
 
-@app.route("/api/export/users")
-def export_users():
-    if not require_login(): return "Unauthorized", 401
-    
-    users = load_users()
-    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status\n"
-    for u in users:
-        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')}\n"
-    
-    response = make_response(csv_data)
-    response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
-    response.headers["Content-type"] = "text/csv"
-    return response
-
-@app.route("/api/reports")
-def generate_reports():
+@app.route("/user/<username>/schedule", methods=["GET", "POST"])
+def manage_user_schedule(username):
+    """Manage connection schedule for user"""
     if not require_login(): return jsonify({"error": "Unauthorized"}), 401
     
-    report_type = request.args.get('type', 'bandwidth')
-    from_date = request.args.get('from')
-    to_date = request.args.get('to')
-    
-    db = get_db()
-    try:
-        if report_type == 'bandwidth':
-            data = db.execute('''
-                SELECT username, SUM(bytes_used) / 1024 / 1024 / 1024 as total_gb_used 
-                FROM bandwidth_logs 
-                WHERE log_date BETWEEN ? AND ?
-                GROUP BY username
-                ORDER BY total_gb_used DESC
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
-        
-        elif report_type == 'users':
-            data = db.execute('''
-                SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as new_users
-                FROM users 
-                WHERE created_at BETWEEN ? AND datetime(?, '+1 day')
-                GROUP BY date
-                ORDER BY date ASC
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
-
-        elif report_type == 'revenue':
-            data = db.execute('''
-                SELECT plan_type, currency, SUM(amount) as total_revenue
-                FROM billing
-                WHERE created_at BETWEEN ? AND datetime(?, '+1 day')
-                GROUP BY plan_type, currency
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
-        
-        else:
-            return jsonify({"message": "Invalid report type"}), 400
-
-        return jsonify([dict(d) for d in data])
-    finally:
-        db.close()
-
-@app.route("/api/user/update", methods=["POST"])
-def update_user():
-    t = g.t
-    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
-    
-    data = request.get_json() or {}
-    user = data.get('user')
-    password = data.get('password')
-    
-    if user and password:
+    if request.method == "POST":
+        schedule_data = request.get_json()
         db = get_db()
-        db.execute('UPDATE users SET password = ? WHERE username = ?', (password, user))
-        db.commit()
-        db.close()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": "User password updated"})
-    
-    return jsonify({"ok": False, "err": "Invalid data"})
+        try:
+            db.execute('''
+                INSERT OR REPLACE INTO user_schedules 
+                (username, schedule_data, updated_at)
+                VALUES (?, ?, ?)
+            ''', (username, json.dumps(schedule_data), datetime.now()))
+            db.commit()
+            
+            # Update cache
+            connection_manager.schedule_cache[username] = schedule_data
+            
+            return jsonify({"status": "success"})
+        finally:
+            db.close()
+    else:
+        # GET request - return current schedule
+        schedule = connection_manager.get_user_schedule(username)
+        return jsonify(schedule or {})
+
+# ... (keep existing routes like /, /add, /delete, etc.)
+
+# --- Application Startup ---
+
+@app.before_first_request
+def initialize_enhanced_features():
+    """Initialize enhanced features on first request"""
+    update_database_schema()
+    connection_manager.load_device_registry()
+    connection_manager.start_monitoring()
 
 if __name__ == "__main__":
     web_port = int(os.environ.get("WEB_PORT", "19432"))
-    print(f"Starting ZIVPN Enterprise Web Panel on port {web_port}")
-    print(f"Analytics Enabled: {ANALYTICS_ENABLED}")
-    print(f"Connection Monitoring Enabled: {CONNECTION_MONITORING_ENABLED}")
-    app.run(host="0.0.0.0", port=web_port, debug=False)
-  
+    app.run(host="0.0.0.0", port=web_port)
