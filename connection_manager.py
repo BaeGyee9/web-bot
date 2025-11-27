@@ -1,322 +1,350 @@
 #!/usr/bin/env python3
 """
-ZIVPN Connection Manager - SIMPLE WORKING VERSION
-No External Imports - 100% Standalone
+ZIVPN Enhanced Connection Manager
+Features: Real-time Dashboard, Connection Scheduling, Device Fingerprinting
+Author: BaeGyee9
 """
 
 import sqlite3
 import subprocess
 import time
 import threading
+import json
+import hashlib
+import uuid
 from datetime import datetime, timedelta
+from flask import Blueprint, jsonify, request
 import os
-import logging
-import re
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
 DATABASE_PATH = "/etc/zivpn/zivpn.db"
 
-class SimpleConnectionManager:
+class EnhancedConnectionManager:
     def __init__(self):
-        self.active_connections = {}
+        self.connection_tracker = {}
+        self.device_registry = {}
+        self.schedule_cache = {}
+        self.lock = threading.Lock()
+        self.load_device_registry()
         
     def get_db(self):
-        """Get database connection"""
-        try:
-            conn = sqlite3.connect(DATABASE_PATH)
-            conn.row_factory = sqlite3.Row
-            return conn
-        except Exception as e:
-            logger.error(f"❌ Database connection failed: {e}")
-            return None
-
-    def setup_tables(self):
-        """Create necessary tables if they don't exist"""
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+        
+    def generate_device_fingerprint(self, client_ip, user_agent=""):
+        """Generate unique device fingerprint"""
+        fingerprint_data = f"{client_ip}_{user_agent}_{datetime.now().timestamp()}"
+        device_hash = hashlib.md5(fingerprint_data.encode()).hexdigest()
+        return device_hash
+        
+    def load_device_registry(self):
+        """Load device fingerprints from database"""
         db = self.get_db()
-        if not db:
-            return False
-            
         try:
-            # Live connections table
-            db.execute('''
-                CREATE TABLE IF NOT EXISTS live_connections (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL,
-                    client_ip TEXT NOT NULL,
-                    client_port INTEGER NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    is_online BOOLEAN DEFAULT 1
-                )
-            ''')
-            
-            # User sessions table
-            db.execute('''
-                CREATE TABLE IF NOT EXISTS user_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL,
-                    client_ip TEXT NOT NULL,
-                    client_port INTEGER NOT NULL,
-                    start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    end_time DATETIME,
-                    duration_seconds INTEGER DEFAULT 0
-                )
-            ''')
-            
-            db.commit()
-            logger.info("✅ Database tables ready")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Table setup failed: {e}")
-            return False
+            devices = db.execute('SELECT username, device_hash, mac_address, registered_at FROM device_fingerprints').fetchall()
+            for device in devices:
+                username = device['username']
+                if username not in self.device_registry:
+                    self.device_registry[username] = []
+                self.device_registry[username].append({
+                    'device_hash': device['device_hash'],
+                    'mac_address': device['mac_address'],
+                    'registered_at': device['registered_at']
+                })
+        except sqlite3.OperationalError:
+            # Table doesn't exist yet, will be created later
+            pass
         finally:
             db.close()
-
-    def get_conntrack_connections(self):
-        """Get UDP connections from conntrack"""
+            
+    def register_device(self, username, client_ip, user_agent="", mac_address=""):
+        """Register new device for user"""
+        device_hash = self.generate_device_fingerprint(client_ip, user_agent)
+        
+        db = self.get_db()
         try:
-            # Run conntrack command
-            cmd = "conntrack -L -p udp 2>/dev/null | grep -E 'dport=5667|sport=5667' | grep -v UNREPLIED"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+            db.execute('''
+                INSERT OR REPLACE INTO device_fingerprints 
+                (username, device_hash, mac_address, client_ip, user_agent, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (username, device_hash, mac_address, client_ip, user_agent, datetime.now()))
+            db.commit()
             
-            connections = {}
+            # Update cache
+            if username not in self.device_registry:
+                self.device_registry[username] = []
+            self.device_registry[username].append({
+                'device_hash': device_hash,
+                'mac_address': mac_address,
+                'registered_at': datetime.now().isoformat()
+            })
             
-            if result.returncode == 0:
-                for line in result.stdout.split('\n'):
-                    if not line.strip():
-                        continue
+            return device_hash
+        finally:
+            db.close()
+            
+    def validate_device(self, username, device_hash):
+        """Validate if device is authorized for user"""
+        if username not in self.device_registry:
+            return False
+            
+        authorized_devices = self.device_registry[username]
+        for device in authorized_devices:
+            if device['device_hash'] == device_hash:
+                return True
+        return False
+        
+    def get_user_schedule(self, username):
+        """Get connection schedule for user"""
+        if username in self.schedule_cache:
+            return self.schedule_cache[username]
+            
+        db = self.get_db()
+        try:
+            schedule = db.execute(
+                'SELECT schedule_data FROM user_schedules WHERE username = ?', 
+                (username,)
+            ).fetchone()
+            
+            if schedule and schedule['schedule_data']:
+                schedule_obj = json.loads(schedule['schedule_data'])
+                self.schedule_cache[username] = schedule_obj
+                return schedule_obj
+            return None
+        finally:
+            db.close()
+            
+    def is_within_schedule(self, username):
+        """Check if current time is within user's allowed schedule"""
+        schedule = self.get_user_schedule(username)
+        if not schedule:
+            return True  # No schedule restrictions
+            
+        current_time = datetime.now().time()
+        current_day = datetime.now().strftime("%A").lower()
+        
+        if 'allowed_hours' in schedule:
+            start_time = datetime.strptime(schedule['allowed_hours']['start'], "%H:%M").time()
+            end_time = datetime.strptime(schedule['allowed_hours']['end'], "%H:%M").time()
+            
+            if not (start_time <= current_time <= end_time):
+                return False
+                
+        if 'allowed_days' in schedule:
+            if current_day not in schedule['allowed_days']:
+                return False
+                
+        return True
+        
+    def get_active_connections(self):
+        """Get all active connections with enhanced details"""
+        try:
+            # Get conntrack data
+            result = subprocess.run(
+                "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})'",
+                shell=True, capture_output=True, text=True
+            )
+            
+            connections = []
+            for line in result.stdout.split('\n'):
+                if 'src=' in line and 'dport=' in line:
+                    try:
+                        parts = line.split()
+                        connection_info = {
+                            'src_ip': None,
+                            'dport': None,
+                            'bytes': 0,
+                            'timestamp': datetime.now().isoformat()
+                        }
                         
-                    # Parse the line
-                    parts = line.split()
-                    src_ip = None
-                    src_port = None
-                    dst_ip = None
-                    dst_port = None
-                    
-                    for part in parts:
-                        if part.startswith('src='):
-                            src_ip = part.split('=')[1]
-                        elif part.startswith('sport='):
-                            src_port = part.split('=')[1]
-                        elif part.startswith('dst='):
-                            dst_ip = part.split('=')[1]
-                        elif part.startswith('dport='):
-                            dst_port = part.split('=')[1]
-                    
-                    # Determine client connection
-                    if src_ip and src_port and dst_port == '5667':
-                        # Client -> Server
-                        connections[f"{src_ip}:{src_port}"] = {
-                            'client_ip': src_ip,
-                            'client_port': src_port,
-                            'type': 'client_to_server'
-                        }
-                    elif dst_ip and dst_port and src_port == '5667':
-                        # Server -> Client
-                        connections[f"{dst_ip}:{dst_port}"] = {
-                            'client_ip': dst_ip,
-                            'client_port': dst_port,
-                            'type': 'server_to_client'
-                        }
-            
+                        for part in parts:
+                            if part.startswith('src='):
+                                connection_info['src_ip'] = part.split('=')[1]
+                            elif part.startswith('dport='):
+                                connection_info['dport'] = part.split('=')[1]
+                            elif part.startswith('bytes='):
+                                connection_info['bytes'] = int(part.split('=')[1])
+                                
+                        if connection_info['src_ip'] and connection_info['dport']:
+                            connections.append(connection_info)
+                    except Exception as e:
+                        continue
             return connections
-            
         except Exception as e:
-            logger.error(f"❌ Conntrack error: {e}")
-            return {}
-
-    def find_user_by_port(self, port):
-        """Find user by port number"""
+            print(f"Error getting connections: {e}")
+            return []
+            
+    def get_connection_dashboard(self):
+        """Get comprehensive connection dashboard data"""
         db = self.get_db()
-        if not db:
-            return None
-            
         try:
-            user = db.execute(
-                "SELECT username FROM users WHERE port = ? AND status = 'active'",
-                (port,)
-            ).fetchone()
-            
-            return user['username'] if user else None
-            
-        except Exception as e:
-            logger.error(f"❌ User lookup error: {e}")
-            return None
-        finally:
-            db.close()
-
-    def update_live_connection(self, username, client_ip, client_port):
-        """Update live connection in database"""
-        db = self.get_db()
-        if not db:
-            return
-            
-        try:
-            # Check if connection already exists
-            existing = db.execute(
-                "SELECT id FROM live_connections WHERE username = ? AND client_ip = ? AND client_port = ?",
-                (username, client_ip, client_port)
-            ).fetchone()
-            
-            if existing:
-                # Update existing connection
-                db.execute(
-                    "UPDATE live_connections SET last_seen = datetime('now'), is_online = 1 WHERE id = ?",
-                    (existing['id'],)
-                )
-            else:
-                # Insert new connection
-                db.execute(
-                    "INSERT INTO live_connections (username, client_ip, client_port, created_at, last_seen, is_online) VALUES (?, ?, ?, datetime('now'), datetime('now'), 1)",
-                    (username, client_ip, client_port)
-                )
-                
-                # Also create session record
-                db.execute(
-                    "INSERT INTO user_sessions (username, client_ip, client_port, start_time) VALUES (?, ?, ?, datetime('now'))",
-                    (username, client_ip, client_port)
-                )
-                
-                logger.info(f"🟢 NEW CONNECTION: {username} from {client_ip}:{client_port}")
-            
-            db.commit()
-            
-        except Exception as e:
-            logger.error(f"❌ Database update error: {e}")
-        finally:
-            db.close()
-
-    def cleanup_old_connections(self):
-        """Remove connections older than 2 minutes"""
-        db = self.get_db()
-        if not db:
-            return
-            
-        try:
-            cutoff_time = (datetime.now() - timedelta(minutes=2)).strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Find connections to cleanup
-            old_conns = db.execute(
-                "SELECT id, username, client_ip, client_port FROM live_connections WHERE last_seen < ?",
-                (cutoff_time,)
-            ).fetchall()
-            
-            for conn in old_conns:
-                logger.info(f"🔴 CLEANUP: {conn['username']} from {conn['client_ip']}:{conn['client_port']}")
-                
-                # Update session end time
-                db.execute(
-                    "UPDATE user_sessions SET end_time = datetime('now'), duration_seconds = CAST((julianday('now') - julianday(start_time)) * 86400 AS INTEGER) WHERE username = ? AND client_ip = ? AND client_port = ? AND end_time IS NULL",
-                    (conn['username'], conn['client_ip'], conn['client_port'])
-                )
-            
-            # Remove from live connections
-            db.execute("DELETE FROM live_connections WHERE last_seen < ?", (cutoff_time,))
-            db.commit()
-            
-        except Exception as e:
-            logger.error(f"❌ Cleanup error: {e}")
-        finally:
-            db.close()
-
-    def get_live_stats(self):
-        """Get current live connection statistics"""
-        db = self.get_db()
-        if not db:
-            return {'total': 0, 'users': []}
-            
-        try:
-            # Total connections
-            total_result = db.execute("SELECT COUNT(*) as count FROM live_connections WHERE is_online = 1").fetchone()
-            total = total_result['count'] if total_result else 0
-            
-            # Users with connections
-            users_result = db.execute('''
-                SELECT username, COUNT(*) as connections 
-                FROM live_connections 
-                WHERE is_online = 1 
-                GROUP BY username 
-                ORDER BY connections DESC
+            # Get user connection statistics
+            user_stats = db.execute('''
+                SELECT u.username, u.status, u.concurrent_conn, 
+                       COUNT(df.device_hash) as registered_devices,
+                       (SELECT COUNT(*) FROM user_schedules WHERE username = u.username) as has_schedule
+                FROM users u
+                LEFT JOIN device_fingerprints df ON u.username = df.username
+                GROUP BY u.username
             ''').fetchall()
             
-            users = [dict(row) for row in users_result]
+            active_connections = self.get_active_connections()
             
-            return {
-                'total_live_connections': total,
-                'user_connection_stats': users
+            # Group connections by port/user
+            connections_by_port = {}
+            for conn in active_connections:
+                port = conn['dport']
+                if port not in connections_by_port:
+                    connections_by_port[port] = []
+                connections_by_port[port].append(conn)
+            
+            dashboard_data = {
+                'total_active_connections': len(active_connections),
+                'total_registered_users': len(user_stats),
+                'connections_by_port': connections_by_port,
+                'user_statistics': [dict(user) for user in user_stats],
+                'timestamp': datetime.now().isoformat()
             }
             
-        except Exception as e:
-            logger.error(f"❌ Stats error: {e}")
-            return {'total_live_connections': 0, 'user_connection_stats': []}
+            return dashboard_data
+        finally:
+            db.close()
+            
+    def enforce_connection_policies(self, username, client_ip, user_agent=""):
+        """Enforce all connection policies for a user"""
+        violations = []
+        
+        # 1. Check device fingerprint
+        device_hash = self.generate_device_fingerprint(client_ip, user_agent)
+        if not self.validate_device(username, device_hash):
+            # Auto-register device if not exists
+            self.register_device(username, client_ip, user_agent)
+            # violations.append("New device registered")
+        
+        # 2. Check connection schedule
+        if not self.is_within_schedule(username):
+            violations.append("Connection not allowed at this time")
+            
+        # 3. Check concurrent connections
+        db = self.get_db()
+        try:
+            user_data = db.execute(
+                'SELECT concurrent_conn FROM users WHERE username = ?', 
+                (username,)
+            ).fetchone()
+            
+            if user_data:
+                max_connections = user_data['concurrent_conn']
+                active_connections = self.get_active_connections()
+                user_conn_count = sum(1 for conn in active_connections 
+                                    if self.get_username_by_ip(conn['src_ip']) == username)
+                
+                if user_conn_count >= max_connections:
+                    violations.append(f"Maximum connections ({max_connections}) exceeded")
+                    
+        finally:
+            db.close()
+            
+        return violations
+        
+    def get_username_by_ip(self, ip_address):
+        """Get username by IP address (simplified - in real implementation would need mapping)"""
+        # This is a simplified version - real implementation would need proper IP-username mapping
+        db = self.get_db()
+        try:
+            # You would need to maintain an IP-username mapping table
+            user = db.execute(
+                'SELECT username FROM ip_assignments WHERE ip_address = ?', 
+                (ip_address,)
+            ).fetchone()
+            return user['username'] if user else None
+        except:
+            return None
         finally:
             db.close()
 
-    def start_monitoring(self):
-        """Start the monitoring loop"""
-        logger.info("🚀 STARTING SIMPLE CONNECTION MONITOR")
-        
-        # Setup database
-        if not self.setup_tables():
-            logger.error("❌ Failed to setup database")
-            return
-        
-        def monitor_loop():
-            cycle = 0
-            while True:
-                try:
-                    cycle += 1
-                    
-                    # Get current connections from conntrack
-                    connections = self.get_conntrack_connections()
-                    tracked = 0
-                    
-                    # Process each connection
-                    for conn_id, conn_info in connections.items():
-                        client_ip = conn_info['client_ip']
-                        client_port = conn_info['client_port']
-                        
-                        # Find user by port
-                        username = self.find_user_by_port(client_port)
-                        
-                        if username:
-                            self.update_live_connection(username, client_ip, client_port)
-                            tracked += 1
-                    
-                    # Cleanup every 5 cycles
-                    if cycle % 5 == 0:
-                        self.cleanup_old_connections()
-                        stats = self.get_live_stats()
-                        logger.info(f"📊 Cycle {cycle}: {tracked} active, {stats['total_live_connections']} in DB")
-                    
-                    time.sleep(5)  # Check every 5 seconds
-                    
-                except Exception as e:
-                    logger.error(f"❌ Monitor error: {e}")
-                    time.sleep(10)
-        
-        # Start monitoring
-        thread = threading.Thread(target=monitor_loop, daemon=True)
-        thread.start()
-        logger.info("✅ SIMPLE MONITOR RUNNING!")
+# Global instance
+connection_manager = EnhancedConnectionManager()
 
-# Create global instance
-connection_manager = SimpleConnectionManager()
+# Flask Blueprint for API routes
+connection_api = Blueprint('connection_api', __name__)
+
+@connection_api.route('/api/connections/dashboard', methods=['GET'])
+def get_dashboard():
+    """Get real-time connection dashboard"""
+    dashboard_data = connection_manager.get_connection_dashboard()
+    return jsonify(dashboard_data)
+
+@connection_api.route('/api/connections/device/register', methods=['POST'])
+def register_device():
+    """Register a new device for user"""
+    data = request.get_json()
+    username = data.get('username')
+    client_ip = data.get('client_ip')
+    user_agent = data.get('user_agent', '')
+    mac_address = data.get('mac_address', '')
+    
+    device_hash = connection_manager.register_device(username, client_ip, user_agent, mac_address)
+    return jsonify({'device_hash': device_hash, 'status': 'registered'})
+
+@connection_api.route('/api/connections/schedule', methods=['POST'])
+def set_schedule():
+    """Set connection schedule for user"""
+    data = request.get_json()
+    username = data.get('username')
+    schedule_data = data.get('schedule_data')
+    
+    db = connection_manager.get_db()
+    try:
+        db.execute('''
+            INSERT OR REPLACE INTO user_schedules 
+            (username, schedule_data, updated_at)
+            VALUES (?, ?, ?)
+        ''', (username, json.dumps(schedule_data), datetime.now()))
+        db.commit()
+        
+        # Update cache
+        connection_manager.schedule_cache[username] = schedule_data
+        
+        return jsonify({'status': 'success'})
+    finally:
+        db.close()
+
+@connection_api.route('/api/connections/validate', methods=['POST'])
+def validate_connection():
+    """Validate connection against all policies"""
+    data = request.get_json()
+    username = data.get('username')
+    client_ip = data.get('client_ip')
+    user_agent = data.get('user_agent', '')
+    
+    violations = connection_manager.enforce_connection_policies(username, client_ip, user_agent)
+    
+    if violations:
+        return jsonify({'allowed': False, 'violations': violations})
+    else:
+        return jsonify({'allowed': True, 'violations': []})
+
+def start_connection_monitoring():
+    """Start the connection monitoring loop"""
+    def monitor_loop():
+        while True:
+            try:
+                # Update dashboard data every 30 seconds
+                connection_manager.get_connection_dashboard()
+                time.sleep(30)
+            except Exception as e:
+                print(f"Monitoring error: {e}")
+                time.sleep(60)
+                
+    monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+    monitor_thread.start()
 
 if __name__ == "__main__":
-    print("🎯 ZIVPN SIMPLE CONNECTION MANAGER - NO IMPORTS")
-    connection_manager.start_monitoring()
-    
+    print("Starting Enhanced Connection Manager...")
+    start_connection_monitoring()
     try:
-        # Keep running
         while True:
             time.sleep(60)
     except KeyboardInterrupt:
-        print("🛑 Stopped")
+        print("Stopping Enhanced Connection Manager...")
