@@ -1,7 +1,7 @@
 #!/bin/bash
 # ZIVPN UDP Server + Web UI (Myanmar) - ENTERPRISE EDITION
 # Author: မောင်သုည [🇲🇲]
-# Features: Complete Enterprise Management System with Real-time Monitoring, Analytics, and Business Intelligence
+# Features: Complete Enterprise Management System with Bandwidth Control, Billing, Multi-Server, API, etc.
 set -euo pipefail
 
 # ===== Pretty =====
@@ -49,7 +49,6 @@ systemctl stop zivpn-bot.service 2>/dev/null || true
 systemctl stop zivpn-cleanup.timer 2>/dev/null || true
 systemctl stop zivpn-backup.timer 2>/dev/null || true
 systemctl stop zivpn-connection.service 2>/dev/null || true
-systemctl stop zivpn-analytics.service 2>/dev/null || true
 
 # ===== Enhanced Packages =====
 say "${Y}📦 Enhanced Packages တင်နေပါတယ်...${Z}"
@@ -61,7 +60,7 @@ apt-get install -y curl ufw jq python3 python3-flask python3-pip python3-venv ip
   apt-get install -y curl ufw jq python3 python3-flask python3-pip iproute2 conntrack ca-certificates sqlite3 >/dev/null
 }
 
-# Additional Python packages for analytics
+# Additional Python packages
 pip3 install requests python-dateutil python-dotenv python-telegram-bot >/dev/null 2>&1 || true
 apt_guard_end
 
@@ -72,8 +71,7 @@ USERS="/etc/zivpn/users.json"
 DB="/etc/zivpn/zivpn.db"
 ENVF="/etc/zivpn/web.env"
 BACKUP_DIR="/etc/zivpn/backups"
-ANALYTICS_DIR="/etc/zivpn/analytics"
-mkdir -p /etc/zivpn "$BACKUP_DIR" "$ANALYTICS_DIR"
+mkdir -p /etc/zivpn "$BACKUP_DIR"
 
 # ===== Download ZIVPN binary =====
 say "${Y}⬇️ ZIVPN binary ကို ဒေါင်းနေပါတယ်...${Z}"
@@ -153,40 +151,6 @@ CREATE TABLE IF NOT EXISTS notifications (
     read_status INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Enhanced tables for real-time monitoring
-CREATE TABLE IF NOT EXISTS user_sessions (
-    session_id TEXT PRIMARY KEY,
-    username TEXT NOT NULL,
-    device_info TEXT,
-    ip_address TEXT,
-    start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    end_time DATETIME,
-    bytes_sent INTEGER DEFAULT 0,
-    bytes_received INTEGER DEFAULT 0,
-    duration_seconds INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'active'
-);
-
-CREATE TABLE IF NOT EXISTS live_connections (
-    connection_id TEXT PRIMARY KEY,
-    username TEXT NOT NULL,
-    server_ip TEXT,
-    client_ip TEXT,
-    port INTEGER,
-    start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_update DATETIME DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS connection_analytics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date DATE DEFAULT CURRENT_DATE,
-    total_connections INTEGER DEFAULT 0,
-    unique_users INTEGER DEFAULT 0,
-    total_bandwidth INTEGER DEFAULT 0,
-    peak_concurrent INTEGER DEFAULT 0
-);
 EOF
 
 # ===== Base config & Certs =====
@@ -265,32 +229,24 @@ fi
 [ -f "$USERS" ] || echo "[]" > "$USERS"
 chmod 644 "$CFG" "$USERS"
 
-# ===== Download Enhanced Web Panel from GitHub =====
-say "${Y}🌐 GitHub မှ Enhanced Web Panel ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
+# ===== Download Web Panel from GitHub =====
+say "${Y}🌐 GitHub မှ Web Panel ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
 curl -fsSL -o /etc/zivpn/web.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py"
 if [ $? -ne 0 ]; then
   echo -e "${R}❌ Web Panel ဒေါင်းလုပ်ဆွဲ၍မရပါ - Fallback သုံးပါမယ်${Z}"
   # Fallback web panel code would go here
 fi
 
-# ===== Download Enhanced Telegram Bot from GitHub =====
-say "${Y}🤖 GitHub မှ Enhanced Telegram Bot ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
+# ===== Download Telegram Bot from GitHub =====
+say "${Y}🤖 GitHub မှ Telegram Bot ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
 curl -fsSL -o /etc/zivpn/bot.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/telegram/bot.py"
 if [ $? -ne 0 ]; then
   echo -e "${R}❌ Telegram Bot ဒေါင်းလုပ်ဆွဲ၍မရပါ - Fallback သုံးပါမယ်${Z}"
   # Fallback bot code would go here
 fi
 
-# ===== Download Connection Manager =====
-say "${Y}🔗 Connection Manager ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
-curl -fsSL -o /etc/zivpn/connection_manager.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/connection_manager.py"
-
-# ===== Download Analytics Engine =====
-say "${Y}📊 Analytics Engine ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
-curl -fsSL -o /etc/zivpn/analytics.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/analytics.py"
-
 # ===== API Service =====
-say "${Y}🔌 Enhanced API Service ထည့်သွင်းနေပါတယ်...${Z}"
+say "${Y}🔌 API Service ထည့်သွင်းနေပါတယ်...${Z}"
 cat >/etc/zivpn/api.py <<'PY'
 from flask import Flask, jsonify, request
 import sqlite3, datetime
@@ -489,8 +445,141 @@ if __name__ == '__main__':
     backup_database()
 PY
 
+# ===== Connection Manager =====
+say "${Y}🔗 Connection Manager ထည့်သွင်းနေပါတယ်...${Z}"
+cat >/etc/zivpn/connection_manager.py <<'PY'
+import sqlite3
+import subprocess
+import time
+import threading
+from datetime import datetime
+import os
+
+DATABASE_PATH = "/etc/zivpn/zivpn.db"
+
+class ConnectionManager:
+    def __init__(self):
+        self.connection_tracker = {}
+        self.lock = threading.Lock()
+        
+    def get_db(self):
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+        
+    def get_active_connections(self):
+        """Get active connections using conntrack"""
+        try:
+            result = subprocess.run(
+                "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | awk '{print $7,$8}'",
+                shell=True, capture_output=True, text=True
+            )
+            
+            connections = {}
+            for line in result.stdout.split('\n'):
+                if 'src=' in line and 'dport=' in line:
+                    try:
+                        parts = line.split()
+                        src_ip = None
+                        dport = None
+                        
+                        for part in parts:
+                            if part.startswith('src='):
+                                src_ip = part.split('=')[1]
+                            elif part.startswith('dport='):
+                                dport = part.split('=')[1]
+                        
+                        if src_ip and dport:
+                            connections[f"{src_ip}:{dport}"] = True
+                    except:
+                        continue
+            return connections
+        except:
+            return {}
+            
+    def enforce_connection_limits(self):
+        """Enforce connection limits for all users"""
+        db = self.get_db()
+        try:
+            # Get all active users with their connection limits
+            users = db.execute('''
+                SELECT username, concurrent_conn, port 
+                FROM users 
+                WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)
+            ''').fetchall()
+            
+            active_connections = self.get_active_connections()
+            
+            for user in users:
+                username = user['username']
+                max_connections = user['concurrent_conn']
+                user_port = str(user['port'] or '5667')
+                
+                # Count connections for this user (by port)
+                user_conn_count = 0
+                user_connections = []
+                
+                for conn_key in active_connections:
+                    if conn_key.endswith(f":{user_port}"):
+                        user_conn_count += 1
+                        user_connections.append(conn_key)
+                
+                # If over limit, drop oldest connections
+                if user_conn_count > max_connections:
+                    print(f"User {username} has {user_conn_count} connections (limit: {max_connections})")
+                    
+                    # Drop excess connections (FIFO - we'll drop the first ones we find)
+                    excess = user_conn_count - max_connections
+                    for i in range(excess):
+                        if i < len(user_connections):
+                            conn_to_drop = user_connections[i]
+                            self.drop_connection(conn_to_drop)
+                            
+        finally:
+            db.close()
+            
+    def drop_connection(self, connection_key):
+        """Drop a specific connection using conntrack"""
+        try:
+            # connection_key format: "IP:PORT"
+            ip, port = connection_key.split(':')
+            subprocess.run(
+                f"conntrack -D -p udp --dport {port} --src {ip}",
+                shell=True, capture_output=True
+            )
+            print(f"Dropped connection: {connection_key}")
+        except Exception as e:
+            print(f"Error dropping connection {connection_key}: {e}")
+            
+    def start_monitoring(self):
+        """Start the connection monitoring loop"""
+        def monitor_loop():
+            while True:
+                try:
+                    self.enforce_connection_limits()
+                    time.sleep(10)  # Check every 10 seconds
+                except Exception as e:
+                    print(f"Monitoring error: {e}")
+                    time.sleep(30)
+                    
+        monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
+        monitor_thread.start()
+        
+# Global instance
+connection_manager = ConnectionManager()
+
+if __name__ == "__main__":
+    print("Starting Connection Manager...")
+    connection_manager.start_monitoring()
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("Stopping Connection Manager...")
+PY
+
 # ===== systemd Services =====
-say "${Y}🧰 Enhanced systemd services များ ထည့်သွင်းနေပါတယ်...${Z}"
+say "${Y}🧰 systemd services များ ထည့်သွင်းနေပါတယ်...${Z}"
 
 # ZIVPN Service
 cat >/etc/systemd/system/zivpn.service <<'EOF'
@@ -517,14 +606,13 @@ EOF
 # Web Panel Service
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
-Description=ZIVPN Web Panel - Enterprise Edition
+Description=ZIVPN Web Panel
 After=network.target
 
 [Service]
 Type=simple
 User=root
 EnvironmentFile=-/etc/zivpn/web.env
-WorkingDirectory=/etc/zivpn
 ExecStart=/usr/bin/python3 /etc/zivpn/web.py
 Restart=always
 RestartSec=3
@@ -554,7 +642,7 @@ EOF
 # Telegram Bot Service
 cat >/etc/systemd/system/zivpn-bot.service <<'EOF'
 [Unit]
-Description=ZIVPN Telegram Bot - Enterprise Edition
+Description=ZIVPN Telegram Bot
 After=network.target
 
 [Service]
@@ -573,7 +661,7 @@ EOF
 # Connection Manager Service
 cat >/etc/systemd/system/zivpn-connection.service <<'EOF'
 [Unit]
-Description=ZIVPN Connection Manager - Real-time Monitoring
+Description=ZIVPN Connection Manager
 After=network.target zivpn.service
 
 [Service]
@@ -583,24 +671,6 @@ WorkingDirectory=/etc/zivpn
 ExecStart=/usr/bin/python3 /etc/zivpn/connection_manager.py
 Restart=always
 RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Analytics Service
-cat >/etc/systemd/system/zivpn-analytics.service <<'EOF'
-[Unit]
-Description=ZIVPN Analytics Engine - Business Intelligence
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/analytics.py
-Restart=always
-RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -680,6 +750,11 @@ iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 # UFW Rules
 ufw allow 1:65535/tcp >/dev/null 2>&1 || true
 ufw allow 1:65535/udp >/dev/null 2>&1 || true
+# ufw allow 22/tcp >/dev/null 2>&1 || true
+# ufw allow 5667/udp >/dev/null 2>&1 || true
+# ufw allow 6000:19999/udp >/dev/null 2>&1 || true
+# ufw allow 19432/tcp >/dev/null 2>&1 || true
+# ufw allow 8081/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
 # ===== Final Setup =====
@@ -693,7 +768,6 @@ systemctl enable --now zivpn-web.service
 systemctl enable --now zivpn-api.service
 systemctl enable --now zivpn-bot.service
 systemctl enable --now zivpn-connection.service
-systemctl enable --now zivpn-analytics.service
 systemctl enable --now zivpn-backup.timer
 systemctl enable --now zivpn-cleanup.timer
 
@@ -706,32 +780,13 @@ systemctl restart zivpn.service
 IP=$(hostname -I | awk '{print $1}')
 echo -e "\n$LINE\n${G}✅ ZIVPN Enterprise Edition Completed!${Z}"
 echo -e "${C}🌐 WEB PANEL:${Z} ${Y}http://$IP:19432${Z}"
+# echo -e "  ${C}Login:${Z} ${Y}$WEB_USER / $WEB_PASS${Z}"
 echo -e "\n${G}🔐 LOGIN CREDENTIALS${Z}"
 echo -e "  ${Y}• Username:${Z} ${Y}$WEB_USER${Z}"
 echo -e "  ${Y}• Password:${Z} ${Y}$WEB_PASS${Z}"
-echo -e "\n${M}📊 ENTERPRISE FEATURES ENABLED:${Z}"
-echo -e "  ${Y}✅ Real-time Connection Monitoring${Z}"
-echo -e "  ${Y}✅ Live User Analytics${Z}"
-echo -e "  ${Y}✅ Revenue Tracking${Z}"
-echo -e "  ${Y}✅ Business Intelligence${Z}"
-echo -e "  ${Y}✅ Enhanced Telegram Bot${Z}"
-echo -e "\n${M}🛠️ SERVICES STATUS:${Z}"
-echo -e "  ${Y}systemctl status zivpn-web${Z}      - Enhanced Web Panel"
-echo -e "  ${Y}systemctl status zivpn-bot${Z}      - Enhanced Telegram Bot"
-echo -e "  ${Y}systemctl status zivpn-connection${Z} - Real-time Connection Manager"
-echo -e "  ${Y}systemctl status zivpn-analytics${Z}  - Business Analytics"
+echo -e "\n${M}📊 SERVICES STATUS:${Z}"
+echo -e "  ${Y}systemctl status zivpn-web${Z}      - Web Panel"
+echo -e "  ${Y}systemctl status zivpn-bot${Z}      - Telegram Bot"
+echo -e "  ${Y}systemctl status zivpn-connection${Z} - Connection Manager"
 echo -e "$LINE"
 
-# Create restart script
-cat > /usr/local/bin/zivpn-restart <<EOF
-#!/bin/bash
-systemctl restart zivpn.service
-systemctl restart zivpn-web.service
-systemctl restart zivpn-bot.service
-systemctl restart zivpn-connection.service
-systemctl restart zivpn-analytics.service
-echo "All ZIVPN Enterprise services restarted successfully"
-EOF
-chmod +x /usr/local/bin/zivpn-restart
-
-echo -e "\n${G}🚀 ZIVPN Enterprise is ready! Access the dashboard and start monitoring your business in real-time.${Z}"
