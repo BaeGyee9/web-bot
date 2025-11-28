@@ -9,6 +9,8 @@ import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
 from datetime import datetime, timedelta
 import statistics
 import requests
+import threading
+import hashlib
 
 # Configuration
 USERS_FILE = "/etc/zivpn/users.json"
@@ -54,7 +56,10 @@ TRANSLATIONS = {
         'dashboard': 'Dashboard', 'system_status': 'System Status',
         'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
         'server_info': 'Server Information', 'vpn_status': 'VPN Status',
-        'active_connections': 'Active Connections'
+        'active_connections': 'Active Connections',
+        'bandwidth_alerts': 'Bandwidth Alerts', 'device_violations': 'Device Violations',
+        'usage_percentage': 'Usage %', 'near_limit': 'Near Limit',
+        'over_limit': 'Over Limit'
     },
     'my': {
         'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
@@ -87,7 +92,11 @@ TRANSLATIONS = {
         'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
         'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
         'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ'
+        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
+        'bandwidth_alerts': 'Bandwidth အသုံးပြုမှု သတိပေးချက်များ',
+        'device_violations': 'အခြား Device များ ချိတ်ဆက်မှု',
+        'usage_percentage': 'အသုံးပြုမှု %', 'near_limit': 'Limit နီးကပ်နေ',
+        'over_limit': 'Limit ကျော်လွန်နေ'
     }
 }
 
@@ -176,6 +185,10 @@ app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
 ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
 ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
+
+# --- NEW: Monitoring Configuration ---
+BANDWIDTH_MONITOR_ENABLED = True
+MULTI_DEVICE_DETECTION_ENABLED = True
 
 # --- Utility Functions ---
 
@@ -331,6 +344,64 @@ def require_login():
         return False
     return True
 
+# --- NEW: Bandwidth Monitoring Functions ---
+def get_bandwidth_alerts():
+    """Get users who are near or over bandwidth limits"""
+    db = get_db()
+    try:
+        alerts = db.execute('''
+            SELECT username, bandwidth_used, bandwidth_limit,
+                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
+            FROM users 
+            WHERE bandwidth_limit > 0 AND status = 'active'
+            AND bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) * 0.8  # 80% or more usage
+            ORDER BY usage_percentage DESC
+        ''').fetchall()
+        return [dict(alert) for alert in alerts]
+    except Exception as e:
+        print(f"Error getting bandwidth alerts: {e}")
+        return []
+    finally:
+        db.close()
+
+def get_multi_device_violations():
+    """Get users with multiple device connections"""
+    db = get_db()
+    try:
+        violations = db.execute('''
+            SELECT target_user as username, details, created_at
+            FROM audit_logs 
+            WHERE action LIKE '%multi_device%'
+            AND created_at > datetime('now', '-1 day')
+            ORDER BY created_at DESC
+            LIMIT 10
+        ''').fetchall()
+        return [dict(violation) for violation in violations]
+    except Exception as e:
+        print(f"Error getting device violations: {e}")
+        return []
+    finally:
+        db.close()
+
+def get_real_time_connection_stats():
+    """Get real-time connection statistics"""
+    try:
+        # Get active connections count
+        result = subprocess.run(
+            "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | wc -l",
+            shell=True, capture_output=True, text=True
+        )
+        active_connections = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
+        
+        return {
+            'active_connections': active_connections,
+            'bandwidth_alerts': len(get_bandwidth_alerts()),
+            'device_violations': len(get_multi_device_violations())
+        }
+    except Exception as e:
+        print(f"Error getting real-time stats: {e}")
+        return {'active_connections': 0, 'bandwidth_alerts': 0, 'device_violations': 0}
+
 # --- Request Hooks ---
 @app.before_request
 def set_language_and_translations():
@@ -383,12 +454,24 @@ def build_view(msg="", err=""):
     listen_port=get_listen_port_from_config()
     stats = get_server_stats()
     
+    # --- NEW: Get monitoring data ---
+    bandwidth_alerts = get_bandwidth_alerts() if BANDWIDTH_MONITOR_ENABLED else []
+    device_violations = get_multi_device_violations() if MULTI_DEVICE_DETECTION_ENABLED else []
+    realtime_stats = get_real_time_connection_stats()
+    
     view=[]
     today_date=datetime.now().date()
     
     for u in users:
         status = status_for_user(u, listen_port)
         expires_str=u.get("expires","")
+        
+        # --- NEW: Calculate bandwidth usage percentage ---
+        bandwidth_used = u.get('bandwidth_used', 0)
+        bandwidth_limit = u.get('bandwidth_limit', 0)
+        usage_percentage = 0
+        if bandwidth_limit > 0:
+            usage_percentage = min(100, (bandwidth_used / (bandwidth_limit * 1024 * 1024 * 1024)) * 100)
         
         view.append(type("U",(),{
             "user":u.get("user",""),
@@ -399,7 +482,10 @@ def build_view(msg="", err=""):
             "bandwidth_limit": u.get('bandwidth_limit', 0),
             "bandwidth_used": f"{u.get('bandwidth_used', 0) / 1024 / 1024 / 1024:.2f}",
             "speed_limit": u.get('speed_limit', 0),
-            "concurrent_conn": u.get('concurrent_conn', 1)
+            "concurrent_conn": u.get('concurrent_conn', 1),
+            "usage_percentage": f"{usage_percentage:.1f}",  # NEW
+            "is_near_limit": usage_percentage >= 80,        # NEW
+            "is_over_limit": usage_percentage >= 100        # NEW
         }))
     
     view.sort(key=lambda x:(x.user or "").lower())
@@ -407,8 +493,13 @@ def build_view(msg="", err=""):
     
     theme = session.get('theme', 'dark')
     html_template = load_html_template()
+    
+    # --- NEW: Pass monitoring data to template ---
     return render_template_string(html_template, authed=True, logo=LOGO_URL, 
                                  users=view, msg=msg, err=err, today=today, stats=stats, 
+                                 bandwidth_alerts=bandwidth_alerts,
+                                 device_violations=device_violations,
+                                 realtime_stats=realtime_stats,
                                  t=t, lang=g.lang, theme=theme)
 
 @app.route("/", methods=["GET"])
@@ -540,9 +631,15 @@ def export_users():
     if not require_login(): return "Unauthorized", 401
     
     users = load_users()
-    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status\n"
+    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status,Usage Percentage\n"
     for u in users:
-        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')}\n"
+        bandwidth_used = u.get('bandwidth_used', 0)
+        bandwidth_limit = u.get('bandwidth_limit', 0)
+        usage_percentage = 0
+        if bandwidth_limit > 0:
+            usage_percentage = min(100, (bandwidth_used / (bandwidth_limit * 1024 * 1024 * 1024)) * 100)
+        
+        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')},{usage_percentage:.1f}%\n"
     
     response = make_response(csv_data)
     response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
@@ -611,6 +708,63 @@ def update_user():
     
     return jsonify({"ok": False, "err": "Invalid data"})
 
+# --- NEW: Monitoring API Routes ---
+@app.route("/api/bandwidth/alerts")
+def get_bandwidth_alerts_api():
+    """API to get bandwidth alerts"""
+    if not require_login(): 
+        return jsonify({"error": "Unauthorized"}), 401
+    alerts = get_bandwidth_alerts()
+    return jsonify(alerts)
+
+@app.route("/api/device/violations")
+def get_device_violations_api():
+    """API to get multi-device violations"""
+    if not require_login(): 
+        return jsonify({"error": "Unauthorized"}), 401
+    violations = get_multi_device_violations()
+    return jsonify(violations)
+
+@app.route("/api/realtime/stats")
+def get_realtime_stats_api():
+    """API to get real-time statistics"""
+    if not require_login(): 
+        return jsonify({"error": "Unauthorized"}), 401
+    stats = get_real_time_connection_stats()
+    return jsonify(stats)
+
+@app.route("/api/user/<username>/connections")
+def get_user_connections_api(username):
+    """API to get user connection details"""
+    if not require_login(): 
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    try:
+        # Get user basic info
+        user = db.execute(
+            'SELECT * FROM users WHERE username = ?', (username,)
+        ).fetchone()
+        
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+            
+        # Get bandwidth usage history
+        bandwidth_history = db.execute('''
+            SELECT log_date, bytes_used / 1024 / 1024 / 1024 as gb_used
+            FROM bandwidth_logs 
+            WHERE username = ? 
+            ORDER BY log_date DESC 
+            LIMIT 30
+        ''', (username,)).fetchall()
+        
+        user_data = dict(user)
+        user_data['bandwidth_history'] = [dict(history) for history in bandwidth_history]
+        
+        return jsonify(user_data)
+    finally:
+        db.close()
+
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
+    web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
