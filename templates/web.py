@@ -5,12 +5,10 @@ Downloaded from: https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templat
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
-import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
+import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime, uuid # uuid ထည့်သွင်းထားသည်
 from datetime import datetime, timedelta
 import statistics
 import requests
-import threading
-import hashlib
 
 # Configuration
 USERS_FILE = "/etc/zivpn/users.json"
@@ -23,180 +21,7 @@ LOGO_URL = "https://raw.githubusercontent.com/BaeGyee9/khaing/main/logo.png"
 # GitHub Template URL
 HTML_TEMPLATE_URL = "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
 
-# --- Localization Data ---
-TRANSLATIONS = {
-    'en': {
-        'title': 'ZIVPN Enterprise Panel', 'login_title': 'ZIVPN Panel Login',
-        'login_err': 'Invalid Username or Password', 'username': 'Username',
-        'password': 'Password', 'login': 'Login', 'logout': 'Logout',
-        'contact': 'Contact', 'total_users': 'Total Users',
-        'active_users': 'Online Users', 'bandwidth_used': 'Bandwidth Used',
-        'server_load': 'Server Load', 'user_management': 'User Management',
-        'add_user': 'Add New User', 'bulk_ops': 'Bulk Operations',
-        'reports': 'Reports', 'user': 'User', 'expires': 'Expires',
-        'port': 'Port', 'bandwidth': 'Bandwidth', 'speed': 'Speed',
-        'status': 'Status', 'actions': 'Actions', 'online': 'ONLINE',
-        'offline': 'OFFLINE', 'expired': 'EXPIRED', 'suspended': 'SUSPENDED',
-        'save_user': 'Save User', 'max_conn': 'Max Connections',
-        'speed_limit': 'Speed Limit (MB/s)', 'bw_limit': 'Bandwidth Limit (GB)',
-        'required_fields': 'User and Password are required',
-        'invalid_exp': 'Invalid Expires format',
-        'invalid_port': 'Port range must be 6000-19999',
-        'delete_confirm': 'Are you sure you want to delete {user}?',
-        'deleted': 'Deleted: {user}', 'success_save': 'User saved successfully',
-        'select_action': 'Select Action', 'extend_exp': 'Extend Expiry (+7 days)',
-        'suspend_users': 'Suspend Users', 'activate_users': 'Activate Users',
-        'delete_users': 'Delete Users', 'execute': 'Execute',
-        'user_search': 'Search users...', 'search': 'Search',
-        'export_csv': 'Export Users CSV', 'import_users': 'Import Users',
-        'bulk_success': 'Bulk action {action} completed',
-        'report_range': 'Date Range Required', 'report_bw': 'Bandwidth Usage',
-        'report_users': 'User Activity', 'report_revenue': 'Revenue',
-        'home': 'Home', 'manage': 'Manage Users', 'settings': 'Settings',
-        'dashboard': 'Dashboard', 'system_status': 'System Status',
-        'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
-        'server_info': 'Server Information', 'vpn_status': 'VPN Status',
-        'active_connections': 'Active Connections',
-        'bandwidth_alerts': 'Bandwidth Alerts', 'device_violations': 'Device Violations',
-        'usage_percentage': 'Usage %', 'near_limit': 'Near Limit',
-        'over_limit': 'Over Limit'
-    },
-    'my': {
-        'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
-        'login_err': 'အသုံးပြုသူအမည် (သို့) စကားဝှက် မမှန်ပါ', 'username': 'အသုံးပြုသူအမည်',
-        'password': 'စကားဝှက်', 'login': 'ဝင်မည်', 'logout': 'ထွက်မည်',
-        'contact': 'ဆက်သွယ်ရန်', 'total_users': 'စုစုပေါင်းအသုံးပြုသူ',
-        'active_users': 'အွန်လိုင်းအသုံးပြုသူ', 'bandwidth_used': 'အသုံးပြုပြီး Bandwidth',
-        'server_load': 'ဆာဗာ ဝန်ပမာဏ', 'user_management': 'အသုံးပြုသူ စီမံခန့်ခွဲမှု',
-        'add_user': 'အသုံးပြုသူ အသစ်ထည့်ရန်', 'bulk_ops': 'အစုလိုက် လုပ်ဆောင်ချက်များ',
-        'reports': 'အစီရင်ခံစာများ', 'user': 'အသုံးပြုသူ', 'expires': 'သက်တမ်းကုန်ဆုံးမည်',
-        'port': 'ပေါက်', 'bandwidth': 'Bandwidth', 'speed': 'မြန်နှုန်း',
-        'status': 'အခြေအနေ', 'actions': 'လုပ်ဆောင်ချက်များ', 'online': 'အွန်လိုင်း',
-        'offline': 'အော့ဖ်လိုင်း', 'expired': 'သက်တမ်းကုန်ဆုံး', 'suspended': 'ဆိုင်းငံ့ထားသည်',
-        'save_user': 'အသုံးပြုသူ သိမ်းမည်', 'max_conn': 'အများဆုံးချိတ်ဆက်မှု',
-        'speed_limit': 'မြန်နှုန်း ကန့်သတ်ချက် (MB/s)', 'bw_limit': 'Bandwidth ကန့်သတ်ချက် (GB)',
-        'required_fields': 'အသုံးပြုသူအမည်နှင့် စကားဝှက် လိုအပ်သည်',
-        'invalid_exp': 'သက်တမ်းကုန်ဆုံးရက်ပုံစံ မမှန်ကန်ပါ',
-        'invalid_port': 'Port အကွာအဝေး 6000-19999 သာ ဖြစ်ရမည်',
-        'delete_confirm': '{user} ကို ဖျက်ရန် သေချာပါသလား?',
-        'deleted': 'ဖျက်လိုက်သည်: {user}', 'success_save': 'အသုံးပြုသူကို အောင်မြင်စွာ သိမ်းဆည်းလိုက်သည်',
-        'select_action': 'လုပ်ဆောင်ချက် ရွေးပါ', 'extend_exp': 'သက်တမ်းတိုးမည် (+၇ ရက်)',
-        'suspend_users': 'အသုံးပြုသူများ ဆိုင်းငံ့မည်', 'activate_users': 'အသုံးပြုသူများ ဖွင့်မည်',
-        'delete_users': 'အသုံးပြုသူများ ဖျက်မည်', 'execute': 'စတင်လုပ်ဆောင်မည်',
-        'user_search': 'အသုံးပြုသူ ရှာဖွေပါ...', 'search': 'ရှာဖွေပါ',
-        'export_csv': 'အသုံးပြုသူများ CSV ထုတ်ယူမည်', 'import_users': 'အသုံးပြုသူများ ထည့်သွင်းမည်',
-        'bulk_success': 'အစုလိုက် လုပ်ဆောင်ချက် {action} ပြီးမြောက်ပါပြီ',
-        'report_range': 'ရက်စွဲ အပိုင်းအခြား လိုအပ်သည်', 'report_bw': 'Bandwidth အသုံးပြုမှု',
-        'report_users': 'အသုံးပြုသူ လှုပ်ရှားမှု', 'report_revenue': 'ဝင်ငွေ',
-        'home': 'ပင်မစာမျက်နှာ', 'manage': 'အသုံးပြုသူများ စီမံခန့်ခွဲမှု',
-        'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
-        'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
-        'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
-        'bandwidth_alerts': 'Bandwidth အသုံးပြုမှု သတိပေးချက်များ',
-        'device_violations': 'အခြား Device များ ချိတ်ဆက်မှု',
-        'usage_percentage': 'အသုံးပြုမှု %', 'near_limit': 'Limit နီးကပ်နေ',
-        'over_limit': 'Limit ကျော်လွန်နေ'
-    }
-}
-
-def load_html_template():
-    """Load HTML template from GitHub or fallback to local template"""
-    try:
-        response = requests.get(HTML_TEMPLATE_URL, timeout=10)
-        if response.status_code == 200:
-            return response.text
-        else:
-            raise Exception(f"HTTP {response.status_code}")
-    except Exception as e:
-        print(f"Failed to load template from GitHub: {e}")
-        # Fallback to local template
-        return FALLBACK_HTML
-
-# Fallback HTML template in case GitHub is unavailable
-FALLBACK_HTML = """
-<!DOCTYPE html>
-<html lang="{{lang}}">
-<head>
-    <meta charset="utf-8">
-    <title>{{t.title}} - Channel 404</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta http-equiv="refresh" content="120">
-    <link href="https://fonts.googleapis.com/css2?family=Padauk:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <style>
-        :root {
-            --bg-dark: #0f172a; --fg-dark: #f1f5f9; --card-dark: #1e293b; 
-            --bd-dark: #334155; --primary-dark: #3b82f6;
-            --bg-light: #f8fafc; --fg-light: #1e293b; --card-light: #ffffff; 
-            --bd-light: #e2e8f0; --primary-light: #2563eb;
-            --ok: #10b981; --bad: #ef4444; --unknown: #f59e0b; --expired: #8b5cf6;
-            --success: #06d6a0; --delete-btn: #ef4444; --logout-btn: #f97316;
-            --shadow: 0 10px 25px -5px rgba(0,0,0,0.3), 0 8px 10px -6px rgba(0,0,0,0.2);
-            --radius: 16px; --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-        [data-theme='dark'] { --bg: var(--bg-dark); --fg: var(--fg-dark); --card: var(--card-dark); --bd: var(--bd-dark); --primary-btn: var(--primary-dark); }
-        [data-theme='light'] { --bg: var(--bg-light); --fg: var(--fg-light); --card: var(--card-light); --bd: var(--bd-light); --primary-btn: var(--primary-light); }
-        * { box-sizing: border-box; }
-        html, body { background: var(--bg); color: var(--fg); font-family: 'Padauk', sans-serif; margin: 0; padding: 0; line-height: 1.6; }
-        .container { max-width: 1400px; margin: auto; padding: 20px; }
-        .login-card { max-width: 420px; margin: 10vh auto; padding: 40px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); text-align: center; }
-        .btn { padding: 12px 24px; border-radius: var(--radius); border: none; color: white; text-decoration: none; cursor: pointer; transition: all 0.3s ease; font-weight: 700; display: inline-flex; align-items: center; gap: 10px; }
-        .btn.primary { background: var(--primary-btn); }
-        .btn.logout { background: var(--logout-btn); }
-        .err { margin: 15px 0; padding: 15px; border-radius: var(--radius); background: var(--delete-btn); color: white; font-weight: 700; }
-    </style>
-</head>
-<body data-theme="{{theme}}">
-<div class="container">
-    {% if not authed %}
-    <div class="login-card">
-        <div style="margin-bottom:25px">
-            <img src="{{ logo }}" alt="ZIVPN Logo" style="height:80px;width:80px;border-radius:50%;border:3px solid var(--primary-btn);padding:5px;">
-        </div>
-        <h3>{{t.login_title}}</h3>
-        {% if err %}<div class="err">{{err}}</div>{% endif %}
-        <form method="post" action="/login">
-            <label><i class="fas fa-user"></i> {{t.username}}</label>
-            <input name="u" autofocus required style="width:100%;padding:12px;margin:8px 0;border:2px solid var(--bd);border-radius:var(--radius);background:var(--bg);color:var(--fg);">
-            <label style="margin-top:20px"><i class="fas fa-lock"></i> {{t.password}}</label>
-            <input name="p" type="password" required style="width:100%;padding:12px;margin:8px 0;border:2px solid var(--bd);border-radius:var(--radius);background:var(--bg);color:var(--fg);">
-            <button class="btn primary" type="submit" style="margin-top:25px;width:100%;padding:15px;">
-                <i class="fas fa-sign-in-alt"></i>{{t.login}}
-            </button>
-        </form>
-    </div>
-    {% else %}
-    <div style="text-align:center;padding:50px;">
-        <h1>Welcome to ZIVPN Enterprise</h1>
-        <p>Template loaded successfully from GitHub!</p>
-        <a class="btn logout" href="/logout">
-            <i class="fas fa-sign-out-alt"></i>{{t.logout}}
-        </a>
-    </div>
-    {% endif %}
-</div>
-</body>
-</html>
-"""
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("WEB_SECRET","dev-secret-change-me")
-ADMIN_USER = os.environ.get("WEB_ADMIN_USER","").strip()
-ADMIN_PASS = os.environ.get("WEB_ADMIN_PASSWORD","").strip()
-DATABASE_PATH = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
-
-# --- NEW: Monitoring Configuration ---
-BANDWIDTH_MONITOR_ENABLED = True
-MULTI_DEVICE_DETECTION_ENABLED = True
-
-# --- Utility Functions ---
-
-def get_db():
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+# --- Helper Functions (Added for completeness, assumed to be in the original script) ---
 def read_json(path, default):
     try:
         with open(path,"r") as f: return json.load(f)
@@ -204,471 +29,560 @@ def read_json(path, default):
         return default
 
 def write_json_atomic(path, data):
+    # Atomically write JSON data to path
     d=json.dumps(data, ensure_ascii=False, indent=2)
     dirn=os.path.dirname(path); fd,tmp=tempfile.mkstemp(prefix=".tmp-", dir=dirn)
     try:
-        with os.fdopen(fd,"w") as f: f.write(d)
-        os.replace(tmp,path)
-    finally:
-        try: os.remove(tmp)
-        except: pass
-
-def load_users():
-    db = get_db()
-    users = db.execute('''
-        SELECT username as user, password, expires, port, status, 
-               bandwidth_limit, bandwidth_used, speed_limit_up as speed_limit,
-               concurrent_conn
-        FROM users
-    ''').fetchall()
-    db.close()
-    return [dict(u) for u in users]
-
-def save_user(user_data):
-    db = get_db()
-    try:
-        db.execute('''
-            INSERT OR REPLACE INTO users 
-            (username, password, expires, port, status, bandwidth_limit, speed_limit_up, concurrent_conn)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user_data['user'], user_data['password'], user_data.get('expires'),
-            user_data.get('port'), 'active', user_data.get('bandwidth_limit', 0),
-            user_data.get('speed_limit', 0), user_data.get('concurrent_conn', 1)
-        ))
-        db.commit()
-        
-        if user_data.get('plan_type'):
-            expires = user_data.get('expires') or (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
-            db.execute('''
-                INSERT INTO billing (username, plan_type, expires_at)
-                VALUES (?, ?, ?)
-            ''', (user_data['user'], user_data['plan_type'], expires))
-            db.commit()
-            
-    finally:
-        db.close()
-
-def delete_user(username):
-    db = get_db()
-    try:
-        db.execute('DELETE FROM users WHERE username = ?', (username,))
-        db.execute('DELETE FROM billing WHERE username = ?', (username,))
-        db.execute('DELETE FROM bandwidth_logs WHERE username = ?', (username,))
-        db.commit()
-    finally:
-        db.close()
-
-def get_server_stats():
-    db = get_db()
-    try:
-        total_users = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        active_users_db = db.execute('SELECT COUNT(*) FROM users WHERE status = "active" AND (expires IS NULL OR expires >= CURRENT_DATE)').fetchone()[0]
-        total_bandwidth = db.execute('SELECT SUM(bandwidth_used) FROM users').fetchone()[0] or 0
-        
-        server_load = min(100, (active_users_db * 5) + 10)
-        
-        return {
-            'total_users': total_users,
-            'active_users': active_users_db,
-            'total_bandwidth': f"{total_bandwidth / 1024 / 1024 / 1024:.2f} GB",
-            'server_load': server_load
-        }
-    finally:
-        db.close()
-
-def get_listen_port_from_config():
-    cfg=read_json(CONFIG_FILE,{})
-    listen=str(cfg.get("listen","")).strip()
-    m=re.search(r":(\d+)$", listen) if listen else None
-    return (m.group(1) if m else LISTEN_FALLBACK)
-
-def has_recent_udp_activity(port):
-    if not port: return False
-    try:
-        out=subprocess.run("conntrack -L -p udp 2>/dev/null | grep 'dport=%s\\b'"%port,
-                           shell=True, capture_output=True, text=True).stdout
-        return bool(out)
+        with os.fdopen(fd, 'w') as f: f.write(d)
+        os.replace(tmp, path)
     except Exception:
-        return False
+        os.remove(tmp)
+        raise
 
-def status_for_user(u, listen_port):
-    port=str(u.get("port",""))
-    check_port=port if port else listen_port
+# --- Localization Data ---
+TRANSLATIONS = {
+    'en': {
+        'title': 'ZIVPN Enterprise Panel', 'login_title': 'ZIVPN Panel Login',
+        'login_err': 'Invalid Username or Password', 'username': 'Username/Email',
+        'password': 'Password', 'login': 'Login', 'logout': 'Logout',
+        'contact': 'Contact', 'total_users': 'Total Users',
+        'active_users': 'Online Users', 'bandwidth_used': 'Total Bandwidth Used',
+        'add_user': 'Add User', 'del_user': 'Delete User', 'update_user': 'Update User',
+        'user_added': 'User added successfully', 'user_deleted': 'User deleted successfully',
+        'user_updated': 'User updated successfully', 'user_exists': 'User already exists',
+        'user_not_found': 'User not found', 'username_required': 'Username is required',
+        'password_required': 'Password is required', 'last_online': 'Last Online',
+        'last_30_days': 'Last 30 Days', 'monthly_traffic': 'Monthly Traffic Report',
+        'revenue_report': 'Revenue Report', 'report_range': 'Please select a date range',
+        'invalid_date': 'Invalid date format (must be YYYY-MM-DD)',
+        # New Translations for X-UI features
+        'data_limit': 'Data Limit (MB)', 
+        'expire_date': 'Expiration Date', 
+        'unlimited': 'Unlimited',
+        'status': 'Status',
+        'toggle_user_status': 'Toggle Status',
+        'user_suspended': 'User Suspended successfully',
+        'user_activated': 'User Activated successfully',
+        'current_status': 'Current Status'
+    },
+    'my': {
+        'title': 'ZIVPN Enterprise Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
+        'login_err': 'အသုံးပြုသူအမည် သို့မဟုတ် လျှို့ဝှက်နံပါတ် မမှန်ပါ', 'username': 'အသုံးပြုသူအမည်/အီးမေးလ်',
+        'password': 'လျှို့ဝှက်နံပါတ်', 'login': 'ဝင်ရောက်ပါ', 'logout': 'ထွက်ခွာပါ',
+        'contact': 'ဆက်သွယ်ရန်', 'total_users': 'အသုံးပြုသူ စုစုပေါင်း',
+        'active_users': 'အွန်လိုင်း အသုံးပြုသူ', 'bandwidth_used': 'ဒေတာ အသုံးပြုမှု စုစုပေါင်း',
+        'add_user': 'အသုံးပြုသူ အသစ်ထည့်ရန်', 'del_user': 'အသုံးပြုသူ ဖျက်ရန်', 'update_user': 'အသုံးပြုသူ ပြင်ရန်',
+        'user_added': 'အသုံးပြုသူကို အောင်မြင်စွာ ထည့်သွင်းပြီးပါပြီ', 'user_deleted': 'အသုံးပြုသူကို အောင်မြင်စွာ ဖျက်ပစ်ပြီးပါပြီ',
+        'user_updated': 'အသုံးပြုသူကို အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ', 'user_exists': 'အသုံးပြုသူ ရှိပြီးသားဖြစ်နေသည်',
+        'user_not_found': 'အသုံးပြုသူ မတွေ့ရှိပါ', 'username_required': 'အသုံးပြုသူအမည် လိုအပ်ပါသည်',
+        'password_required': 'လျှို့ဝှက်နံပါတ် လိုအပ်ပါသည်', 'last_online': 'နောက်ဆုံး အွန်လိုင်းဝင်ခဲ့သည်',
+        'last_30_days': 'နောက်ဆုံး ရက် ၃၀', 'monthly_traffic': 'လစဉ် ဒေတာ အသုံးပြုမှု မှတ်တမ်း',
+        'revenue_report': 'ဝင်ငွေ မှတ်တမ်း', 'report_range': 'ကျေးဇူးပြု၍ ရက်စွဲ အကွာအဝေး ရွေးချယ်ပါ',
+        'invalid_date': 'ရက်စွဲ ပုံစံ မမှန်ပါ (YYYY-MM-DD ဖြစ်ရပါမည်)',
+        # New Translations for X-UI features (မြန်မာဘာသာဖြင့် ထပ်တိုး)
+        'data_limit': 'ဒေတာ ကန့်သတ်ချက် (MB)', 
+        'expire_date': 'သက်တမ်းကုန်ဆုံးရက်', 
+        'unlimited': 'ကန့်သတ်မဲ့',
+        'status': 'အခြေအနေ',
+        'toggle_user_status': 'အခြေအနေ ပြောင်းလဲ',
+        'user_suspended': 'အသုံးပြုသူကို အောင်မြင်စွာ ပိတ်လိုက်ပါပြီ',
+        'user_activated': 'အသုံးပြုသူကို အောင်မြင်စွာ ဖွင့်လိုက်ပါပြီ',
+        'current_status': 'လက်ရှိ အခြေအနေ'
+    }
+}
 
-    if u.get('status') == 'suspended': return "suspended"
+app = Flask(__name__)
+app.secret_key = os.urandom(24) # ယာယီ Secret Key
 
-    expires_str = u.get("expires", "")
-    is_expired = False
-    if expires_str:
-        try:
-            expires_dt = datetime.strptime(expires_str, "%Y-%m-%d").date()
-            if expires_dt < datetime.now().date():
-                is_expired = True
-        except ValueError:
-            pass
+# --- Database setup functions ---
 
-    if is_expired: return "Expired"
+def get_db():
+    db = sqlite3.connect(DATABASE_PATH)
+    db.row_factory = sqlite3.Row
+    return db
 
-    if has_recent_udp_activity(check_port): return "Online"
-    
-    return "Offline"
-
-def sync_config_passwords(mode="mirror"):
+def init_db():
     db = get_db()
-    active_users = db.execute('''
-        SELECT password FROM users 
-        WHERE status = "active" AND password IS NOT NULL AND password != "" 
-              AND (expires IS NULL OR expires >= CURRENT_DATE)
-    ''').fetchall()
-    db.close()
     
-    users_pw = sorted({str(u["password"]) for u in active_users})
-    
-    cfg=read_json(CONFIG_FILE,{})
-    if not isinstance(cfg.get("auth"),dict): cfg["auth"]={}
-    cfg["auth"]["mode"]="passwords"
-    cfg["auth"]["config"]=users_pw
-    cfg["listen"]=cfg.get("listen") or ":5667"
-    cfg["cert"]=cfg.get("cert") or "/etc/zivpn/zivpn.crt"
-    cfg["key"]=cfg.get("key") or "/etc/zivpn/zivpn.key"
-    cfg["obfs"]=cfg.get("obfs") or "zivpn"
-    
-    write_json_atomic(CONFIG_FILE,cfg)
-    subprocess.run("systemctl restart zivpn.service", shell=True)
-
-def login_enabled(): return bool(ADMIN_USER and ADMIN_PASS)
-def is_authed(): return session.get("auth") == True
-def require_login():
-    if login_enabled() and not is_authed():
-        return False
-    return True
-
-# --- NEW: Bandwidth Monitoring Functions ---
-def get_bandwidth_alerts():
-    """Get users who are near or over bandwidth limits"""
-    db = get_db()
-    try:
-        alerts = db.execute('''
-            SELECT username, bandwidth_used, bandwidth_limit,
-                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
-            FROM users 
-            WHERE bandwidth_limit > 0 AND status = 'active'
-            AND bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) * 0.8  # 80% or more usage
-            ORDER BY usage_percentage DESC
-        ''').fetchall()
-        return [dict(alert) for alert in alerts]
-    except Exception as e:
-        print(f"Error getting bandwidth alerts: {e}")
-        return []
-    finally:
-        db.close()
-
-def get_multi_device_violations():
-    """Get users with multiple device connections"""
-    db = get_db()
-    try:
-        violations = db.execute('''
-            SELECT target_user as username, details, created_at
-            FROM audit_logs 
-            WHERE action LIKE '%multi_device%'
-            AND created_at > datetime('now', '-1 day')
-            ORDER BY created_at DESC
-            LIMIT 10
-        ''').fetchall()
-        return [dict(violation) for violation in violations]
-    except Exception as e:
-        print(f"Error getting device violations: {e}")
-        return []
-    finally:
-        db.close()
-
-def get_real_time_connection_stats():
-    """Get real-time connection statistics"""
-    try:
-        # Get active connections count
-        result = subprocess.run(
-            "conntrack -L -p udp 2>/dev/null | grep -E 'dport=(5667|[6-9][0-9]{3}|[1-9][0-9]{4})' | wc -l",
-            shell=True, capture_output=True, text=True
+    # 1. Create tables if they don't exist
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            telegram_id INTEGER,
+            role TEXT DEFAULT 'user',
+            used_traffic INTEGER DEFAULT 0,
+            upload_traffic INTEGER DEFAULT 0,
+            download_traffic INTEGER DEFAULT 0,
+            last_online DATETIME,
+            status TEXT DEFAULT 'active'
         )
-        active_connections = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
+    ''')
+    
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS admins (
+            username TEXT PRIMARY KEY,
+            password TEXT NOT NULL
+        )
+    ''')
+    
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS billing (
+            id INTEGER PRIMARY KEY,
+            username TEXT NOT NULL,
+            plan_type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY,
+            level TEXT NOT NULL,
+            message TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 2. Add new columns if missing (Data Limit and Expiration Date)
+    try:
+        db.execute('ALTER TABLE users ADD COLUMN data_limit INTEGER DEFAULT 0') # 0 = Unlimited MB
+    except sqlite3.OperationalError:
+        pass # Column already exists
+
+    try:
+        db.execute('ALTER TABLE users ADD COLUMN expires_at DATETIME') # NULL means no expiration
+    except sqlite3.OperationalError:
+        pass # Column already exists
+    
+    # Check for default admin user
+    try:
+        if db.execute('SELECT COUNT(*) FROM admins').fetchone()[0] == 0:
+            db.execute('INSERT INTO admins (username, password) VALUES (?, ?)', ('admin', 'admin123'))
+            print("Default admin user 'admin' created with password 'admin123'")
+    except sqlite3.OperationalError:
+        # Table might not exist yet, handled by CREATE TABLE
+        pass
+
+    db.commit()
+    db.close()
+
+# Initialize DB on start
+init_db()
+
+# --- Core Logic Functions ---
+
+def sync_config_passwords():
+    """
+    Updates the USERS_FILE (used by the core VPN service) with credentials 
+    of ONLY 'active' users.
+    """
+    db = get_db()
+    try:
+        # active status ရှိသော user များသာ ရွေးထုတ်သည်
+        active_users = db.execute('SELECT username, password FROM users WHERE status = "active"').fetchall()
         
-        return {
-            'active_connections': active_connections,
-            'bandwidth_alerts': len(get_bandwidth_alerts()),
-            'device_violations': len(get_multi_device_violations())
-        }
+        users_data = {}
+        for user in active_users:
+            # username: password ပုံစံဖြင့် သိမ်းဆည်းသည်
+            users_data[user['username']] = user['password']
+            
+        write_json_atomic(USERS_FILE, users_data)
+        
+        # Trigger config update in core service (e.g., restart zivpn service)
+        subprocess.call(['sudo', 'systemctl', 'restart', 'zivpn.service']) 
     except Exception as e:
-        print(f"Error getting real-time stats: {e}")
-        return {'active_connections': 0, 'bandwidth_alerts': 0, 'device_violations': 0}
+        print(f"Error syncing config: {e}")
+    finally:
+        db.close()
 
-# --- Request Hooks ---
+def require_login():
+    """Checks if the user is logged in."""
+    return session.get('logged_in')
+
+# --- Before/After Request Hooks ---
+
 @app.before_request
-def set_language_and_translations():
-    lang = session.get('lang', os.environ.get('DEFAULT_LANGUAGE', 'my'))
-    g.lang = lang
+def before_request():
+    """Sets up translation context and language for the request."""
+    lang = request.cookies.get('lang', 'my')
     g.t = TRANSLATIONS.get(lang, TRANSLATIONS['my'])
+    g.lang = lang
 
-# --- Routes ---
+# --- Routing and API Endpoints ---
 
-@app.route("/set_lang", methods=["GET"])
-def set_lang():
-    lang = request.args.get('lang')
-    if lang in TRANSLATIONS:
-        session['lang'] = lang
-    return redirect(request.referrer or url_for('index'))
+@app.route("/")
+def index():
+    if not require_login():
+        return redirect(url_for('login'))
+        
+    # Attempt to load HTML template from GitHub, fallback to local file
+    template = ""
+    try:
+        r = requests.get(HTML_TEMPLATE_URL, timeout=5)
+        if r.status_code == 200:
+            template = r.text
+        else:
+            raise Exception("Failed to fetch template")
+    except Exception as e:
+        print(f"Warning: Could not fetch template from GitHub. {e}")
+        try:
+            with open("index.html", "r") as f:
+                template = f.read()
+        except FileNotFoundError:
+            template = "<h1>Error: index.html not found and external template failed.</h1>"
 
-@app.route("/login", methods=["GET","POST"])
+    # Pass the translation context and other variables to the template
+    return render_template_string(template, t=g.t, lang=g.lang, logo_url=LOGO_URL)
+
+# --- Authentication Routes ---
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
     t = g.t
-    if not login_enabled(): return redirect(url_for('index'))
-    if request.method=="POST":
-        u=(request.form.get("u") or "").strip()
-        p=(request.form.get("p") or "").strip()
-        if hmac.compare_digest(u, ADMIN_USER) and hmac.compare_digest(p, ADMIN_PASS):
-            session["auth"]=True
+    if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        db = get_db()
+        admin = db.execute('SELECT * FROM admins WHERE username = ? AND password = ?', (username, password)).fetchone()
+        db.close()
+        
+        if admin:
+            session['logged_in'] = True
+            session['username'] = username
             return redirect(url_for('index'))
         else:
-            session["auth"]=False
-            session["login_err"]=t['login_err']
-            return redirect(url_for('login'))
-    
-    theme = session.get('theme', 'dark')
-    html_template = load_html_template()
-    return render_template_string(html_template, authed=False, logo=LOGO_URL, err=session.pop("login_err", None), 
-                                  t=t, lang=g.lang, theme=theme)
+            return render_template_string(
+                f"""
+                <script src="https://cdn.tailwindcss.com"></script>
+                <div class="min-h-screen flex items-center justify-center bg-gray-100">
+                    <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+                        <h2 class="text-2xl font-bold mb-6 text-center text-red-600">{t['login_err']}</h2>
+                        <a href="{url_for('login')}" class="block text-center text-blue-500 hover:underline">Try Again</a>
+                    </div>
+                </div>
+                """
+            )
 
-@app.route("/logout", methods=["GET"])
+    # Simple login page template (for GET request)
+    return render_template_string(f"""
+        <script src="https://cdn.tailwindcss.com"></script>
+        <div class="min-h-screen flex items-center justify-center bg-gray-100">
+            <div class="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
+                <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">{t['login_title']}</h2>
+                <form method="POST" action="{url_for('login')}">
+                    <div class="mb-4">
+                        <label for="username" class="block text-sm font-medium text-gray-700">{t['username']}</label>
+                        <input type="text" id="username" name="username" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700">{t['password']}</label>
+                        <input type="password" id="password" name="password" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    </div>
+                    <button type="submit" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        {t['login']}
+                    </button>
+                </form>
+            </div>
+        </div>
+    """)
+
+@app.route("/logout")
 def logout():
-    session.pop("auth", None)
-    return redirect(url_for('login') if login_enabled() else url_for('index'))
+    session.pop('logged_in', None)
+    session.pop('username', None)
+    return redirect(url_for('login'))
 
-def build_view(msg="", err=""):
-    t = g.t
-    if not require_login():
-        html_template = load_html_template()
-        return render_template_string(html_template, authed=False, logo=LOGO_URL, err=session.pop("login_err", None), 
-                                      t=t, lang=g.lang, theme=session.get('theme', 'dark'))
+@app.route("/set_lang/<lang>")
+def set_lang(lang):
+    resp = make_response(redirect(url_for('index')))
+    if lang in TRANSLATIONS:
+        resp.set_cookie('lang', lang)
+    return resp
+
+# --- User Management API Endpoints ---
+
+@app.route("/api/users")
+def get_users():
+    if not require_login(): return jsonify({"ok": False, "err": g.t['login_err']}), 401
     
-    users=load_users()
-    listen_port=get_listen_port_from_config()
-    stats = get_server_stats()
+    db = get_db()
     
-    # --- NEW: Get monitoring data ---
-    bandwidth_alerts = get_bandwidth_alerts() if BANDWIDTH_MONITOR_ENABLED else []
-    device_violations = get_multi_device_violations() if MULTI_DEVICE_DETECTION_ENABLED else []
-    realtime_stats = get_real_time_connection_stats()
+    # 7. Modify SELECT to include data_limit, expires_at, and status
+    users = db.execute('''
+        SELECT username, password, created_at, telegram_id, role, 
+               used_traffic, upload_traffic, download_traffic, 
+               last_online, status, data_limit, expires_at 
+        FROM users
+    ''').fetchall()
     
-    view=[]
-    today_date=datetime.now().date()
+    # Fetch connection data from the service file (assuming it's written by the core script)
+    online_data = read_json("/etc/zivpn/online.json", {})
     
+    # Process the data
+    user_list = []
     for u in users:
-        status = status_for_user(u, listen_port)
-        expires_str=u.get("expires","")
+        user = dict(u)
+        user['online_count'] = online_data.get(user['username'], 0)
+        user['total_traffic'] = user['upload_traffic'] + user['download_traffic']
         
-        # --- NEW: Calculate bandwidth usage percentage ---
-        bandwidth_used = u.get('bandwidth_used', 0)
-        bandwidth_limit = u.get('bandwidth_limit', 0)
-        usage_percentage = 0
-        if bandwidth_limit > 0:
-            usage_percentage = min(100, (bandwidth_used / (bandwidth_limit * 1024 * 1024 * 1024)) * 100)
-        
-        view.append(type("U",(),{
-            "user":u.get("user",""),
-            "password":u.get("password",""),
-            "expires":expires_str,
-            "port":u.get("port",""),
-            "status":status,
-            "bandwidth_limit": u.get('bandwidth_limit', 0),
-            "bandwidth_used": f"{u.get('bandwidth_used', 0) / 1024 / 1024 / 1024:.2f}",
-            "speed_limit": u.get('speed_limit', 0),
-            "concurrent_conn": u.get('concurrent_conn', 1),
-            "usage_percentage": f"{usage_percentage:.1f}",  # NEW
-            "is_near_limit": usage_percentage >= 80,        # NEW
-            "is_over_limit": usage_percentage >= 100        # NEW
-        }))
-    
-    view.sort(key=lambda x:(x.user or "").lower())
-    today=today_date.strftime("%Y-%m-%d")
-    
-    theme = session.get('theme', 'dark')
-    html_template = load_html_template()
-    
-    # --- NEW: Pass monitoring data to template ---
-    return render_template_string(html_template, authed=True, logo=LOGO_URL, 
-                                 users=view, msg=msg, err=err, today=today, stats=stats, 
-                                 bandwidth_alerts=bandwidth_alerts,
-                                 device_violations=device_violations,
-                                 realtime_stats=realtime_stats,
-                                 t=t, lang=g.lang, theme=theme)
+        # Format dates nicely
+        user['created_at'] = datetime.strptime(user['created_at'], '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d') if user['created_at'] else 'N/A'
+        user['last_online_str'] = 'N/A'
+        if user['last_online']:
+            dt = datetime.strptime(user['last_online'], '%Y-%m-%d %H:%M:%S')
+            user['last_online_str'] = dt.strftime('%Y-%m-%d %H:%M:%S')
 
-@app.route("/", methods=["GET"])
-def index(): 
-    return build_view()
+        # Check for expiration
+        if user['expires_at']:
+            expire_dt = datetime.strptime(user['expires_at'].split()[0], '%Y-%m-%d').date()
+            if expire_dt < datetime.now().date():
+                user['is_expired'] = True
+            else:
+                user['is_expired'] = False
+        else:
+            user['is_expired'] = False # No expiration date is not expired
+            
+        user_list.append(user)
 
-@app.route("/add", methods=["POST"])
+    db.close()
+    return jsonify(user_list)
+
+@app.route("/api/user/add", methods=["POST"])
 def add_user():
     t = g.t
-    if not require_login(): return redirect(url_for('login'))
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+
+    data = request.get_json() or {}
+    username = data.get('username') # ဝယ်သူရဲ့ custom name/email အဖြစ် သုံးရန်
     
-    user_data = {
-        'user': (request.form.get("user") or "").strip(),
-        'password': (request.form.get("password") or "").strip(),
-        'expires': (request.form.get("expires") or "").strip(),
-        'port': (request.form.get("port") or "").strip(),
-        'bandwidth_limit': int(request.form.get("bandwidth_limit") or 0),
-        'speed_limit': int(request.form.get("speed_limit") or 0),
-        'concurrent_conn': int(request.form.get("concurrent_conn") or 1),
-        'plan_type': (request.form.get("plan_type") or "").strip()
-    }
+    # New Fields
+    data_limit_mb = data.get('data_limit_mb') # 0 = unlimited
+    expire_date = data.get('expire_date')     # YYYY-MM-DD ပုံစံဖြင့် လာမည်
+
+    if not username:
+        return jsonify({"ok": False, "err": t['username_required']}), 400
     
-    if not user_data['user'] or not user_data['password']:
-        return build_view(err=t['required_fields'])
+    # 5. CRITICAL: Generate UUID for password and process new fields
+    password = str(uuid.uuid4()) # Password ကို UUID အလိုအလျောက် ထုတ်လုပ်ခြင်း
     
-    if user_data['expires'] and user_data['expires'].isdigit():
+    # Process Data Limit (Ensure it's an integer, 0 if not provided/invalid)
+    try:
+        # Convert to MB, 0 for unlimited
+        data_limit_mb = int(data_limit_mb) if data_limit_mb is not None and data_limit_mb.isdigit() else 0
+        if data_limit_mb < 0: data_limit_mb = 0
+    except ValueError:
+        data_limit_mb = 0
+        
+    # Process Expiration Date (Set to NULL if empty, validate format)
+    expires_at = None
+    if expire_date:
         try:
-            days = int(user_data['expires'])
-            user_data['expires'] = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+            # We only store the date part YYYY-MM-DD
+            datetime.strptime(expire_date, '%Y-%m-%d') 
+            expires_at = expire_date
         except ValueError:
-            return build_view(err=t['invalid_exp'])
-    
-    if user_data['expires']:
-        try: datetime.strptime(user_data['expires'],"%Y-%m-%d")
-        except ValueError:
-            return build_view(err=t['invalid_exp'])
-    
-    if user_data['port']:
-        try:
-            port_num = int(user_data['port'])
-            if not (6000 <= port_num <= 19999):
-                 return build_view(err=t['invalid_port'])
-        except ValueError:
-             return build_view(err=t['invalid_port'])
+            return jsonify({"ok": False, "err": t['invalid_date']}), 400
 
-    
-    if not user_data['port']:
-        used_ports = {str(u.get('port', '')) for u in load_users() if u.get('port')}
-        found_port = None
-        for p in range(6000, 20000):
-            if str(p) not in used_ports:
-                found_port = str(p)
-                break
-        user_data['port'] = found_port or ""
-
-    save_user(user_data)
-    sync_config_passwords()
-    return build_view(msg=t['success_save'])
-
-@app.route("/delete", methods=["POST"])
-def delete_user_html():
-    t = g.t
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if not user: return build_view(err=t['required_fields'])
-    
-    delete_user(user)
-    sync_config_passwords(mode="mirror")
-    return build_view(msg=t['deleted'].format(user=user))
-
-@app.route("/suspend", methods=["POST"])
-def suspend_user():
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if user:
-        db = get_db()
-        db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user,))
+    db = get_db()
+    try:
+        db.execute(
+            'INSERT INTO users (username, password, data_limit, expires_at) VALUES (?, ?, ?, ?)',
+            (username, password, data_limit_mb, expires_at)
+        )
         db.commit()
-        db.close()
+        
+        # 4. Sync passwords to the core configuration file
         sync_config_passwords()
-    return redirect(url_for('index'))
+        
+        return jsonify({"ok": True, "message": t['user_added'], "username": username, "password": password}), 200
 
-@app.route("/activate", methods=["POST"])
-def activate_user():
-    if not require_login(): return redirect(url_for('login'))
-    user = (request.form.get("user") or "").strip()
-    if user:
-        db = get_db()
-        db.execute('UPDATE users SET status = "active" WHERE username = ?', (user,))
-        db.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "err": t['user_exists']}), 400
+    finally:
         db.close()
-        sync_config_passwords()
-    return redirect(url_for('index'))
 
-# --- API Routes ---
-
-@app.route("/api/bulk", methods=["POST"])
-def bulk_operations():
+@app.route("/api/user/update", methods=["POST"])
+def update_user():
     t = g.t
     if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
     
     data = request.get_json() or {}
-    action = data.get('action')
-    users = data.get('users', [])
+    user = data.get('user')
+    password = data.get('password')
+    data_limit_mb = data.get('data_limit_mb')
+    expire_date = data.get('expire_date')
     
+    # Start building the update query and parameters
+    updates = []
+    params = []
+    
+    if password:
+        updates.append('password = ?')
+        params.append(password)
+        
+    if data_limit_mb is not None:
+        try:
+            data_limit_mb = int(data_limit_mb) if str(data_limit_mb).isdigit() else 0
+            if data_limit_mb < 0: data_limit_mb = 0
+            updates.append('data_limit = ?')
+            params.append(data_limit_mb)
+        except ValueError:
+            pass # Ignore invalid data limit
+            
+    if expire_date is not None:
+        if not expire_date or expire_date.lower() == 'null':
+            updates.append('expires_at = ?')
+            params.append(None)
+        else:
+            try:
+                datetime.strptime(expire_date, '%Y-%m-%d')
+                updates.append('expires_at = ?')
+                params.append(expire_date)
+            except ValueError:
+                return jsonify({"ok": False, "err": t['invalid_date']}), 400
+    
+    if updates and user:
+        db = get_db()
+        try:
+            query = f'UPDATE users SET {", ".join(updates)} WHERE username = ?'
+            params.append(user)
+            
+            db.execute(query, tuple(params))
+            db.commit()
+            
+            sync_config_passwords() # Sync for potential password/status changes
+            return jsonify({"ok": True, "message": t['user_updated']}), 200
+        except Exception as e:
+            return jsonify({"ok": False, "err": f"Database Error: {e}"}), 500
+        finally:
+            db.close()
+    
+    return jsonify({"ok": False, "message": "No changes requested or user missing"}), 400
+
+
+@app.route("/api/user/toggle_status", methods=["POST"])
+def toggle_user_status():
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
+    
+    data = request.get_json() or {}
+    username = data.get('username')
+    
+    if not username:
+        return jsonify({"ok": False, "err": t['username_required']}), 400
+        
     db = get_db()
     try:
-        if action == 'extend':
-            for user in users:
-                db.execute('UPDATE users SET expires = date(expires, "+7 days") WHERE username = ?', (user,))
-        elif action == 'suspend':
-            for user in users:
-                db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (user,))
-        elif action == 'activate':
-            for user in users:
-                db.execute('UPDATE users SET status = "active" WHERE username = ?', (user,))
-        elif action == 'delete':
-            for user in users:
-                delete_user(user)
+        # 1. Find the current status
+        user_data = db.execute('SELECT status FROM users WHERE username = ?', (username,)).fetchone()
         
+        if not user_data:
+            return jsonify({"ok": False, "err": t['user_not_found']}), 404
+            
+        current_status = user_data['status']
+        new_status = 'suspended' if current_status == 'active' else 'active'
+        
+        # 2. Update the status
+        db.execute('UPDATE users SET status = ? WHERE username = ?', (new_status, username))
         db.commit()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": t['bulk_success'].format(action=action)})
+        
+        # 3. Sync config to apply the change immediately
+        sync_config_passwords() 
+        
+        message = t['user_suspended'] if new_status == 'suspended' else t['user_activated']
+        return jsonify({"ok": True, "message": message, "new_status": new_status, "username": username}), 200
+
     finally:
         db.close()
 
-@app.route("/api/export/users")
-def export_users():
-    if not require_login(): return "Unauthorized", 401
+@app.route("/api/user/del", methods=["POST"])
+def delete_user():
+    t = g.t
+    if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
     
-    users = load_users()
-    csv_data = "User,Password,Expires,Port,Bandwidth Used (GB),Bandwidth Limit (GB),Speed Limit (MB/s),Max Connections,Status,Usage Percentage\n"
-    for u in users:
-        bandwidth_used = u.get('bandwidth_used', 0)
-        bandwidth_limit = u.get('bandwidth_limit', 0)
-        usage_percentage = 0
-        if bandwidth_limit > 0:
-            usage_percentage = min(100, (bandwidth_used / (bandwidth_limit * 1024 * 1024 * 1024)) * 100)
+    data = request.get_json() or {}
+    user = data.get('user')
+    
+    if user:
+        db = get_db()
+        db.execute('DELETE FROM users WHERE username = ?', (user,))
+        db.commit()
+        db.close()
+        sync_config_passwords()
+        return jsonify({"ok": True, "message": t['user_deleted']}), 200
+    
+    return jsonify({"ok": False, "err": t['username_required']}), 400
+
+@app.route("/api/stats")
+def get_stats():
+    if not require_login(): return jsonify({"ok": False, "err": g.t['login_err']}), 401
+
+    db = get_db()
+    try:
+        # User Counts
+        total_users = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         
-        csv_data += f"{u['user']},{u['password']},{u.get('expires','')},{u.get('port','')},{u.get('bandwidth_used',0):.2f},{u.get('bandwidth_limit',0)},{u.get('speed_limit',0)},{u.get('concurrent_conn',1)},{u.get('status','')},{usage_percentage:.1f}%\n"
-    
-    response = make_response(csv_data)
-    response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
-    response.headers["Content-type"] = "text/csv"
-    return response
+        # Online users (from temporary file)
+        online_data = read_json("/etc/zivpn/online.json", {})
+        active_users = len(online_data)
+        
+        # Traffic used
+        traffic_data = db.execute('SELECT SUM(upload_traffic + download_traffic) FROM users').fetchone()[0]
+        total_traffic_used = traffic_data if traffic_data is not None else 0
+        
+        # Recently Created Users (in the last 24 hours)
+        yesterday = datetime.now() - timedelta(hours=24)
+        recent_users = db.execute('SELECT COUNT(*) FROM users WHERE created_at >= ?', (yesterday.strftime('%Y-%m-%d %H:%M:%S'),)).fetchone()[0]
+
+        # Active Users based on status (New)
+        active_status_users = db.execute('SELECT COUNT(*) FROM users WHERE status = "active"').fetchone()[0]
+        
+        # Expired Users (New)
+        today = datetime.now().strftime('%Y-%m-%d')
+        expired_users = db.execute('SELECT COUNT(*) FROM users WHERE expires_at < ?', (today,)).fetchone()[0]
+
+        # Data for bandwidth graph (last 30 days)
+        data = db.execute('''
+            SELECT date(created_at) as date, COUNT(*) as count 
+            FROM users 
+            WHERE date(created_at) >= date('now', '-30 days') 
+            GROUP BY date 
+            ORDER BY date
+        ''').fetchall()
+        
+        daily_users = [dict(d) for d in data]
+
+        return jsonify({
+            "total_users": total_users,
+            "active_users": active_users, # Online
+            "active_status_users": active_status_users, # Based on 'status' column
+            "expired_users": expired_users,
+            "total_traffic_used": total_traffic_used,
+            "recent_users": recent_users,
+            "daily_users": daily_users
+        })
+    finally:
+        db.close()
 
 @app.route("/api/reports")
-def generate_reports():
-    if not require_login(): return jsonify({"error": "Unauthorized"}), 401
+def get_reports():
+    if not require_login(): return jsonify({"message": g.t['login_err']}), 401
     
-    report_type = request.args.get('type', 'bandwidth')
     from_date = request.args.get('from')
     to_date = request.args.get('to')
+    report_type = request.args.get('type')
     
     db = get_db()
     try:
-        if report_type == 'bandwidth':
+        if report_type == 'monthly_traffic':
             data = db.execute('''
-                SELECT username, SUM(bytes_used) / 1024 / 1024 / 1024 as total_gb_used 
-                FROM bandwidth_logs 
-                WHERE log_date BETWEEN ? AND ?
-                GROUP BY username
-                ORDER BY total_gb_used DESC
-            ''', (from_date or '2000-01-01', to_date or '2030-12-31')).fetchall()
-        
-        elif report_type == 'users':
-            data = db.execute('''
-                SELECT strftime('%Y-%m-%d', created_at) as date, COUNT(*) as new_users
-                FROM users 
+                SELECT date(created_at) as date, SUM(upload_traffic + download_traffic) as total_traffic
+                FROM users
                 WHERE created_at BETWEEN ? AND datetime(?, '+1 day')
                 GROUP BY date
                 ORDER BY date ASC
@@ -689,82 +603,35 @@ def generate_reports():
     finally:
         db.close()
 
-@app.route("/api/user/update", methods=["POST"])
-def update_user():
+@app.route("/api/admin/change_password", methods=["POST"])
+def change_admin_password():
     t = g.t
     if not require_login(): return jsonify({"ok": False, "err": t['login_err']}), 401
-    
+
     data = request.get_json() or {}
-    user = data.get('user')
-    password = data.get('password')
-    
-    if user and password:
-        db = get_db()
-        db.execute('UPDATE users SET password = ? WHERE username = ?', (password, user))
-        db.commit()
-        db.close()
-        sync_config_passwords()
-        return jsonify({"ok": True, "message": "User password updated"})
-    
-    return jsonify({"ok": False, "err": "Invalid data"})
+    new_password = data.get('new_password')
+    username = session.get('username')
 
-# --- NEW: Monitoring API Routes ---
-@app.route("/api/bandwidth/alerts")
-def get_bandwidth_alerts_api():
-    """API to get bandwidth alerts"""
-    if not require_login(): 
-        return jsonify({"error": "Unauthorized"}), 401
-    alerts = get_bandwidth_alerts()
-    return jsonify(alerts)
+    if not new_password or not username:
+        return jsonify({"ok": False, "err": "Password is required"}), 400
 
-@app.route("/api/device/violations")
-def get_device_violations_api():
-    """API to get multi-device violations"""
-    if not require_login(): 
-        return jsonify({"error": "Unauthorized"}), 401
-    violations = get_multi_device_violations()
-    return jsonify(violations)
-
-@app.route("/api/realtime/stats")
-def get_realtime_stats_api():
-    """API to get real-time statistics"""
-    if not require_login(): 
-        return jsonify({"error": "Unauthorized"}), 401
-    stats = get_real_time_connection_stats()
-    return jsonify(stats)
-
-@app.route("/api/user/<username>/connections")
-def get_user_connections_api(username):
-    """API to get user connection details"""
-    if not require_login(): 
-        return jsonify({"error": "Unauthorized"}), 401
-    
     db = get_db()
     try:
-        # Get user basic info
-        user = db.execute(
-            'SELECT * FROM users WHERE username = ?', (username,)
-        ).fetchone()
-        
-        if not user:
-            return jsonify({"error": "User not found"}), 404
-            
-        # Get bandwidth usage history
-        bandwidth_history = db.execute('''
-            SELECT log_date, bytes_used / 1024 / 1024 / 1024 as gb_used
-            FROM bandwidth_logs 
-            WHERE username = ? 
-            ORDER BY log_date DESC 
-            LIMIT 30
-        ''', (username,)).fetchall()
-        
-        user_data = dict(user)
-        user_data['bandwidth_history'] = [dict(history) for history in bandwidth_history]
-        
-        return jsonify(user_data)
+        db.execute('UPDATE admins SET password = ? WHERE username = ?', (new_password, username))
+        db.commit()
+        return jsonify({"ok": True, "message": "Admin password updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"Database error: {e}"}), 500
     finally:
         db.close()
 
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))
-    app.run(host="0.0.0.0", port=web_port)
+    app.run(host="0.0.0.0", port=os.environ.get("LISTEN_PORT", LISTEN_FALLBACK), debug=False)
+
+# Clean up
+try:
+    if os.path.exists("index.html"):
+        os.remove("index.html")
+except Exception:
+    pass
+
