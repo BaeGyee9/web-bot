@@ -12,8 +12,6 @@ import socket
 import json
 import tempfile
 import subprocess
-import threading
-import time
 
 # Configure logging
 logging.basicConfig(
@@ -29,11 +27,6 @@ CONFIG_FILE = "/etc/zivpn/config.json"
 
 # Admin configuration - ONLY YOUR ID CAN SEE ADMIN COMMANDS
 ADMIN_IDS = [7576434717, 7240495054]  # Telegram ID
-
-# --- NEW: Monitoring Configuration ---
-BANDWIDTH_ALERTS_ENABLED = True
-MULTI_DEVICE_ALERTS_ENABLED = True
-ALERT_CHECK_INTERVAL = 300  # 5 minutes
 
 # ===== SYNC CONFIG FUNCTIONS =====
 def read_json(path, default):
@@ -122,161 +115,6 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
-# --- NEW: Bandwidth Monitoring Functions ---
-def get_bandwidth_alerts():
-    """Get users who are near or over bandwidth limits"""
-    db = get_db()
-    try:
-        alerts = db.execute('''
-            SELECT username, bandwidth_used, bandwidth_limit,
-                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
-            FROM users 
-            WHERE bandwidth_limit > 0 AND status = 'active'
-            AND bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) * 0.8  # 80% or more usage
-            ORDER BY usage_percentage DESC
-        ''').fetchall()
-        return [dict(alert) for alert in alerts]
-    except Exception as e:
-        logger.error(f"Error getting bandwidth alerts: {e}")
-        return []
-    finally:
-        db.close()
-
-def get_multi_device_violations():
-    """Get recent multi-device violations"""
-    db = get_db()
-    try:
-        violations = db.execute('''
-            SELECT target_user as username, details, created_at
-            FROM audit_logs 
-            WHERE action LIKE '%multi_device%'
-            AND created_at > datetime('now', '-1 hour')
-            ORDER BY created_at DESC
-            LIMIT 10
-        ''').fetchall()
-        return [dict(violation) for violation in violations]
-    except Exception as e:
-        logger.error(f"Error getting device violations: {e}")
-        return []
-    finally:
-        db.close()
-
-def get_users_near_bandwidth_limit():
-    """Get users who are near their bandwidth limit (80% or more)"""
-    db = get_db()
-    try:
-        users = db.execute('''
-            SELECT username, bandwidth_used, bandwidth_limit,
-                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
-            FROM users 
-            WHERE bandwidth_limit > 0 AND status = 'active'
-            AND bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) * 0.8
-            AND bandwidth_used < (bandwidth_limit * 1024 * 1024 * 1024)  # Under 100%
-            ORDER BY usage_percentage DESC
-        ''').fetchall()
-        return [dict(user) for user in users]
-    except Exception as e:
-        logger.error(f"Error getting users near bandwidth limit: {e}")
-        return []
-    finally:
-        db.close()
-
-def get_users_over_bandwidth_limit():
-    """Get users who are over their bandwidth limit"""
-    db = get_db()
-    try:
-        users = db.execute('''
-            SELECT username, bandwidth_used, bandwidth_limit,
-                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
-            FROM users 
-            WHERE bandwidth_limit > 0 AND status = 'active'
-            AND bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024)  # 100% or more
-            ORDER BY usage_percentage DESC
-        ''').fetchall()
-        return [dict(user) for user in users]
-    except Exception as e:
-        logger.error(f"Error getting users over bandwidth limit: {e}")
-        return []
-    finally:
-        db.close()
-
-def send_alert_to_admins(bot, message):
-    """Send alert message to all admin users"""
-    for admin_id in ADMIN_IDS:
-        try:
-            bot.send_message(
-                chat_id=admin_id,
-                text=message,
-                parse_mode='Markdown'
-            )
-            logger.info(f"Alert sent to admin {admin_id}")
-        except Exception as e:
-            logger.error(f"Failed to send alert to admin {admin_id}: {e}")
-
-def monitor_alerts(bot):
-    """Monitor and send alerts for bandwidth and multi-device violations"""
-    while True:
-        try:
-            # Check bandwidth alerts
-            if BANDWIDTH_ALERTS_ENABLED:
-                users_near_limit = get_users_near_bandwidth_limit()
-                users_over_limit = get_users_over_bandwidth_limit()
-                
-                # Send alerts for users over limit
-                for user in users_over_limit:
-                    alert_message = f"""
-🚨 *BANDWIDTH LIMIT EXCEEDED*
-
-👤 User: `{user['username']}`
-📊 Usage: *{user['usage_percentage']:.1f}%*
-📦 Used: {format_bytes(user['bandwidth_used'])}
-🎯 Limit: {format_bytes(user['bandwidth_limit'] * 1024 * 1024 * 1024)}
-
-⚠️ User has exceeded bandwidth limit!
-🔧 Action: Consider suspending or increasing limit.
-"""
-                    send_alert_to_admins(bot, alert_message)
-                
-                # Send warnings for users near limit
-                for user in users_near_limit:
-                    if user['usage_percentage'] >= 95:  # Only alert for 95%+ usage
-                        warning_message = f"""
-⚠️ *BANDWIDTH LIMIT WARNING*
-
-👤 User: `{user['username']}`
-📊 Usage: *{user['usage_percentage']:.1f}%*
-📦 Used: {format_bytes(user['bandwidth_used'])}
-🎯 Limit: {format_bytes(user['bandwidth_limit'] * 1024 * 1024 * 1024)}
-
-💡 User is near bandwidth limit!
-"""
-                        send_alert_to_admins(bot, warning_message)
-            
-            # Check multi-device violations
-            if MULTI_DEVICE_ALERTS_ENABLED:
-                violations = get_multi_device_violations()
-                for violation in violations:
-                    # Only send alert if violation is recent (last 5 minutes)
-                    violation_time = datetime.strptime(violation['created_at'], '%Y-%m-%d %H:%M:%S')
-                    if (datetime.now() - violation_time).total_seconds() <= 300:
-                        alert_message = f"""
-🔍 *MULTI-DEVICE VIOLATION DETECTED*
-
-👤 User: `{violation['username']}`
-📝 Details: {violation['details']}
-⏰ Time: {violation['created_at']}
-
-🚨 User may be sharing account!
-"""
-                        send_alert_to_admins(bot, alert_message)
-            
-            # Sleep for the defined interval
-            time.sleep(ALERT_CHECK_INTERVAL)
-            
-        except Exception as e:
-            logger.error(f"Error in alert monitoring: {e}")
-            time.sleep(60)  # Wait 1 minute if error occurs
-
 def start(update, context):
     """Send welcome message - PUBLIC"""
     user_id = update.effective_user.id
@@ -308,8 +146,6 @@ def start(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
-/bandwidth - Bandwidth usage report
-/alerts - System alerts status
 """
     
     welcome_text += """
@@ -349,8 +185,6 @@ def help_command(update, context):
 /reset <username> <days> - Reset expiry
 /users - List all users with passwords
 /myinfo <username> - User details with password
-/bandwidth - Bandwidth usage report
-/alerts - System alerts status
 """
     
     help_text += """
@@ -372,25 +206,12 @@ def admin_command(update, context):
     db = get_db()
     total_users = db.execute('SELECT COUNT(*) as count FROM users').fetchone()['count']
     active_users = db.execute('SELECT COUNT(*) as count FROM users WHERE status = "active"').fetchone()['count']
-    
-    # --- NEW: Get monitoring stats ---
-    bandwidth_alerts = len(get_bandwidth_alerts())
-    device_violations = len(get_multi_device_violations())
-    users_near_limit = len(get_users_near_bandwidth_limit())
-    users_over_limit = len(get_users_over_bandwidth_limit())
-    
     db.close()
     
     admin_text = f"""
 🛠️ *Admin Panel*
 🌐 Server IP: `{get_server_ip()}`
 📊 Total Users: *{total_users}* (Active: *{active_users}*)
-
-*📈 Monitoring Status:*
-⚠️ Bandwidth Alerts: *{bandwidth_alerts}*
-🔍 Device Violations: *{device_violations}*
-📶 Near Limit Users: *{users_near_limit}*
-🚨 Over Limit Users: *{users_over_limit}*
 
 *User Management:*
 • /adduser <user> <pass> [days] - Add new user
@@ -403,12 +224,10 @@ def admin_command(update, context):
 • /renew <username> <days> - Renew user (extend from current)
 • /reset <username> <days> - Reset expiry (from today)
 
-*Information & Monitoring:*
+*Information (With Passwords):*
 • /users - List all users with passwords
 • /myinfo <username> - User details with password
 • /stats - Server statistics
-• /bandwidth - Bandwidth usage report
-• /alerts - System alerts status
 
 *Usage Examples:*
 /adduser john pass123 30
@@ -416,119 +235,6 @@ def admin_command(update, context):
 /users - See all users with passwords
 """
     update.message.reply_text(admin_text, parse_mode='Markdown')
-
-# --- NEW: Bandwidth Monitoring Commands ---
-def bandwidth_command(update, context):
-    """Show bandwidth usage report - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-    
-    db = get_db()
-    try:
-        # Get bandwidth usage summary
-        summary = db.execute('''
-            SELECT 
-                COUNT(*) as total_users,
-                SUM(bandwidth_used) as total_bandwidth,
-                SUM(CASE WHEN bandwidth_limit > 0 THEN 1 ELSE 0 END) as limited_users,
-                SUM(CASE WHEN bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) AND bandwidth_limit > 0 THEN 1 ELSE 0 END) as over_limit_users,
-                SUM(CASE WHEN bandwidth_used >= (bandwidth_limit * 1024 * 1024 * 1024) * 0.8 AND bandwidth_used < (bandwidth_limit * 1024 * 1024 * 1024) AND bandwidth_limit > 0 THEN 1 ELSE 0 END) as near_limit_users
-            FROM users WHERE status = 'active'
-        ''').fetchone()
-        
-        # Get top bandwidth users
-        top_users = db.execute('''
-            SELECT username, bandwidth_used, bandwidth_limit,
-                   (bandwidth_used * 100.0 / (bandwidth_limit * 1024 * 1024 * 1024)) as usage_percentage
-            FROM users 
-            WHERE status = 'active' AND bandwidth_limit > 0
-            ORDER BY bandwidth_used DESC 
-            LIMIT 10
-        ''').fetchall()
-        
-        bandwidth_text = f"""
-📊 *Bandwidth Usage Report*
-
-*Summary:*
-👥 Total Users: *{summary['total_users']}*
-📦 Total Bandwidth Used: *{format_bytes(summary['total_bandwidth'] or 0)}*
-🎯 Limited Users: *{summary['limited_users']}*
-⚠️ Near Limit: *{summary['near_limit_users']}*
-🚨 Over Limit: *{summary['over_limit_users']}*
-
-*Top Bandwidth Users:*
-"""
-        
-        for i, user in enumerate(top_users, 1):
-            usage_percentage = user['usage_percentage'] or 0
-            status_icon = "🚨" if usage_percentage >= 100 else "⚠️" if usage_percentage >= 80 else "📊"
-            
-            bandwidth_text += f"""
-{status_icon} *{user['username']}*
-📦 Used: {format_bytes(user['bandwidth_used'])}
-🎯 Limit: {format_bytes(user['bandwidth_limit'] * 1024 * 1024 * 1024)}
-📊 Usage: *{usage_percentage:.1f}%*
-"""
-        
-        update.message.reply_text(bandwidth_text, parse_mode='Markdown')
-        
-    except Exception as e:
-        logger.error(f"Error generating bandwidth report: {e}")
-        update.message.reply_text("❌ Error generating bandwidth report")
-    finally:
-        db.close()
-
-def alerts_command(update, context):
-    """Show system alerts status - ADMIN ONLY"""
-    if not is_admin(update.effective_user.id):
-        update.message.reply_text("❌ Admin only command")
-        return
-    
-    try:
-        bandwidth_alerts = get_bandwidth_alerts()
-        device_violations = get_multi_device_violations()
-        users_near_limit = get_users_near_bandwidth_limit()
-        users_over_limit = get_users_over_bandwidth_limit()
-        
-        alerts_text = f"""
-🚨 *System Alerts Status*
-
-*Bandwidth Monitoring:*
-⚠️ Users Near Limit (80%+): *{len(users_near_limit)}*
-🚨 Users Over Limit: *{len(users_over_limit)}*
-📊 Total Bandwidth Alerts: *{len(bandwidth_alerts)}*
-
-*Device Monitoring:*
-🔍 Recent Device Violations: *{len(device_violations)}*
-"""
-        
-        # Show users over limit
-        if users_over_limit:
-            alerts_text += "\n*🚨 USERS OVER BANDWIDTH LIMIT:*\n"
-            for user in users_over_limit[:5]:  # Show first 5
-                alerts_text += f"• `{user['username']}` - {user['usage_percentage']:.1f}%\n"
-        
-        # Show users near limit
-        if users_near_limit and len(users_over_limit) < 5:
-            alerts_text += "\n*⚠️ USERS NEAR BANDWIDTH LIMIT:*\n"
-            for user in users_near_limit[:5]:  # Show first 5
-                alerts_text += f"• `{user['username']}` - {user['usage_percentage']:.1f}%\n"
-        
-        # Show recent device violations
-        if device_violations:
-            alerts_text += "\n*🔍 RECENT DEVICE VIOLATIONS:*\n"
-            for violation in device_violations[:3]:  # Show first 3
-                alerts_text += f"• `{violation['username']}` - {violation['created_at'][11:16]}\n"
-        
-        if not bandwidth_alerts and not device_violations:
-            alerts_text += "\n✅ *No active alerts* - System is running smoothly!"
-        
-        update.message.reply_text(alerts_text, parse_mode='Markdown')
-        
-    except Exception as e:
-        logger.error(f"Error getting alerts: {e}")
-        update.message.reply_text("❌ Error retrieving alerts")
 
 def adduser_command(update, context):
     """Add new user - PRIVATE (Admin only)"""
@@ -905,10 +611,6 @@ def stats_command(update, context):
             WHERE date(created_at) = date('now')
         ''').fetchone()
         
-        # --- NEW: Get monitoring stats ---
-        bandwidth_alerts = len(get_bandwidth_alerts())
-        device_violations = len(get_multi_device_violations())
-        
         total_users = stats['total_users'] or 0
         active_users = stats['active_users'] or 0
         total_bandwidth = stats['total_bandwidth'] or 0
@@ -921,10 +623,6 @@ def stats_command(update, context):
 🔴 Inactive Users: *{total_users - active_users}*
 🆕 Today's New Users: *{today_new_users}*
 📦 Total Bandwidth Used: *{format_bytes(total_bandwidth)}*
-
-*Monitoring:*
-⚠️ Bandwidth Alerts: *{bandwidth_alerts}*
-🔍 Device Violations: *{device_violations}*
         """
         update.message.reply_text(stats_text, parse_mode='Markdown')
     except Exception as e:
@@ -943,7 +641,7 @@ def users_command(update, context):
     try:
         # NO LIMIT - show ALL users
         users = db.execute('''
-            SELECT username, password, status, expires, bandwidth_used, bandwidth_limit, concurrent_conn
+            SELECT username, password, status, expires, bandwidth_used, concurrent_conn
             FROM users
             ORDER BY created_at DESC
         ''').fetchall()  # NO LIMIT 20
@@ -961,24 +659,10 @@ def users_command(update, context):
             for i, user in enumerate(users[:50]):
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                
-                # --- NEW: Calculate usage percentage ---
-                usage_percentage = 0
-                if user['bandwidth_limit'] and user['bandwidth_limit'] > 0:
-                    usage_percentage = (user['bandwidth_used'] or 0) / (user['bandwidth_limit'] * 1024 * 1024 * 1024) * 100
-                
-                usage_indicator = ""
-                if usage_percentage >= 100:
-                    usage_indicator = " 🚨"
-                elif usage_percentage >= 80:
-                    usage_indicator = " ⚠️"
-                
-                users_text += f"{status_icon} *{user['username']}*{usage_indicator}\n"
+                users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
-                if user['bandwidth_limit'] and user['bandwidth_limit'] > 0:
-                    users_text += f"📊 Usage: {usage_percentage:.1f}%\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
                 users_text += "\n"
@@ -990,24 +674,10 @@ def users_command(update, context):
             for user in users:
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                
-                # --- NEW: Calculate usage percentage ---
-                usage_percentage = 0
-                if user['bandwidth_limit'] and user['bandwidth_limit'] > 0:
-                    usage_percentage = (user['bandwidth_used'] or 0) / (user['bandwidth_limit'] * 1024 * 1024 * 1024) * 100
-                
-                usage_indicator = ""
-                if usage_percentage >= 100:
-                    usage_indicator = " 🚨"
-                elif usage_percentage >= 80:
-                    usage_indicator = " ⚠️"
-                
-                users_text += f"{status_icon} *{user['username']}*{usage_indicator}\n"
+                users_text += f"{status_icon} *{user['username']}*\n"
                 users_text += f"🔐 Password: `{user['password']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
                 users_text += f"📦 Bandwidth: {bandwidth}\n"
-                if user['bandwidth_limit'] and user['bandwidth_limit'] > 0:
-                    users_text += f"📊 Usage: {usage_percentage:.1f}%\n"
                 users_text += f"🔗 Connections: {user['concurrent_conn']}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
@@ -1054,17 +724,6 @@ def myinfo_command(update, context):
                 days_remaining = f" ({days_left} days remaining)" if days_left >= 0 else f" (Expired {-days_left} days ago)"
             except:
                 days_remaining = ""
-        
-        # --- NEW: Calculate bandwidth usage percentage ---
-        usage_percentage = 0
-        if user['bandwidth_limit'] and user['bandwidth_limit'] > 0:
-            usage_percentage = (user['bandwidth_used'] or 0) / (user['bandwidth_limit'] * 1024 * 1024 * 1024) * 100
-        
-        usage_status = ""
-        if usage_percentage >= 100:
-            usage_status = " 🚨 *OVER LIMIT*"
-        elif usage_percentage >= 80:
-            usage_status = " ⚠️ *NEAR LIMIT*"
                 
         user_text = f"""
 🔍 *User Information: {user['username']}*
@@ -1073,7 +732,6 @@ def myinfo_command(update, context):
 ⏰ Expires: *{user['expires'] or 'Never'}{days_remaining}*
 📦 Bandwidth Used: *{format_bytes(user['bandwidth_used'] or 0)}*
 🎯 Bandwidth Limit: *{format_bytes(user['bandwidth_limit'] or 0) if user['bandwidth_limit'] else 'Unlimited'}*
-📊 Usage Percentage: *{usage_percentage:.1f}%*{usage_status}
 ⚡ Speed Limit: *{user['speed_limit_up'] or 0} MB/s*
 🔗 Max Connections: *{user['concurrent_conn']}*
 📅 Created: *{user['created_at'][:10] if user['created_at'] else 'N/A'}*
@@ -1117,21 +775,10 @@ def main():
         dp.add_handler(CommandHandler("reset", reset_command))
         dp.add_handler(CommandHandler("users", users_command))
         dp.add_handler(CommandHandler("myinfo", myinfo_command))
-        
-        # --- NEW: Monitoring Commands ---
-        dp.add_handler(CommandHandler("bandwidth", bandwidth_command))
-        dp.add_handler(CommandHandler("alerts", alerts_command))
 
         dp.add_error_handler(error_handler)
 
         logger.info("🤖 ZIVPN Telegram Bot Started Successfully")
-        
-        # --- NEW: Start alert monitoring in background ---
-        bot = updater.bot
-        alert_thread = threading.Thread(target=monitor_alerts, args=(bot,), daemon=True)
-        alert_thread.start()
-        logger.info("🚨 Alert monitoring system started")
-        
         updater.start_polling()
         updater.idle()
         
