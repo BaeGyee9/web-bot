@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-ZIVPN Telegram Bot - Unlimited Users Version
+ZIVPN Telegram Bot - UUID Version
+Enhanced with UUID authentication and modern features
 """
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, filters
@@ -12,6 +13,7 @@ import socket
 import json
 import tempfile
 import subprocess
+import uuid
 
 # Configure logging
 logging.basicConfig(
@@ -45,18 +47,42 @@ def write_json_atomic(path, data):
         try: os.remove(tmp)
         except: pass
 
+def generate_uuid():
+    """Generate UUID for user authentication"""
+    return str(uuid.uuid4())
+
+def update_database_schema():
+    """Add email_remark column to users table if not exists"""
+    db = get_db()
+    try:
+        # Check if email_remark column exists
+        columns = db.execute("PRAGMA table_info(users)").fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if 'email_remark' not in column_names:
+            db.execute('ALTER TABLE users ADD COLUMN email_remark TEXT')
+            db.commit()
+            logger.info("Added email_remark column to users table")
+    except Exception as e:
+        logger.error(f"Database schema update error: {e}")
+    finally:
+        db.close()
+
+# Update schema on startup
+update_database_schema()
+
 def sync_config_passwords():
     """Sync passwords from database to ZIVPN config"""
     db = get_db()
     try:
-        # Get all active users' passwords
+        # Get all active users' passwords (UUIDs)
         active_users = db.execute('''
             SELECT password FROM users 
             WHERE status = "active" AND password IS NOT NULL AND password != "" 
                   AND (expires IS NULL OR expires >= CURRENT_DATE)
         ''').fetchall()
         
-        # Extract unique passwords
+        # Extract unique passwords (UUIDs)
         users_pw = sorted({str(u["password"]) for u in active_users})
         
         # Update config file
@@ -115,13 +141,45 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
+def create_user_with_uuid(user_data):
+    """Create user with auto-generated UUID"""
+    db = get_db()
+    try:
+        user_uuid = generate_uuid()
+        username = f"user_{int(datetime.now().timestamp())}_{user_uuid[:8]}"
+        
+        db.execute('''
+            INSERT INTO users 
+            (username, password, email_remark, expires, port, status, 
+             bandwidth_limit, speed_limit_up, concurrent_conn, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            username,
+            user_uuid,  # Use UUID as password
+            user_data.get('email_remark', ''),
+            user_data.get('expires'),
+            user_data.get('port'),
+            'active',
+            user_data.get('bandwidth_limit', 0),
+            user_data.get('speed_limit', 0),
+            user_data.get('concurrent_conn', 1),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+        db.commit()
+        return username, user_uuid
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
 def start(update, context):
     """Send welcome message - PUBLIC"""
     user_id = update.effective_user.id
     is_user_admin = is_admin(user_id)
     
     welcome_text = f"""
-🤖 *ZIVPN Management Bot*
+🤖 *ZIVPN Management Bot - UUID Edition*
 🌐 Server: `{get_server_ip()}`
 
 *Available Commands:*
@@ -135,8 +193,8 @@ def start(update, context):
         welcome_text += """
 *🛠️ Admin Commands:*
 /admin - Admin panel
-/adduser <user> <pass> [days] - Add user
-/changepass <user> <newpass> - Change password
+/adduser <remark> <days> [data_limit] - Add user with UUID
+/changepass <user> - Generate new UUID
 /deluser <username> - Delete user
 /suspend <username> - Suspend user
 /activate <username> - Activate user
@@ -144,8 +202,8 @@ def start(update, context):
 /unban <username> - Unban user
 /renew <username> <days> - Renew user
 /reset <username> <days> - Reset expiry
-/users - List all users with passwords
-/myinfo <username> - User details with password
+/users - List all users with UUIDs
+/myinfo <username> - User details with UUID
 """
     
     welcome_text += """
@@ -174,8 +232,8 @@ def help_command(update, context):
         help_text += """
 🛠️ *Admin Commands:*
 /admin - Admin panel
-/adduser <user> <pass> [days] - Add user
-/changepass <user> <newpass> - Change password
+/adduser <remark> <days> [data_limit] - Add user with UUID
+/changepass <user> - Generate new UUID
 /deluser <username> - Delete user
 /suspend <username> - Suspend user
 /activate <username> - Activate user
@@ -183,8 +241,8 @@ def help_command(update, context):
 /unban <username> - Unban user
 /renew <username> <days> - Renew user
 /reset <username> <days> - Reset expiry
-/users - List all users with passwords
-/myinfo <username> - User details with password
+/users - List all users with UUIDs
+/myinfo <username> - User details with UUID
 """
     
     help_text += """
@@ -209,13 +267,13 @@ def admin_command(update, context):
     db.close()
     
     admin_text = f"""
-🛠️ *Admin Panel*
+🛠️ *Admin Panel - UUID Edition*
 🌐 Server IP: `{get_server_ip()}`
 📊 Total Users: *{total_users}* (Active: *{active_users}*)
 
 *User Management:*
-• /adduser <user> <pass> [days] - Add new user
-• /changepass <user> <newpass> - Change password
+• /adduser <remark> <days> [data_limit] - Add new user with UUID
+• /changepass <user> - Generate new UUID for user
 • /deluser <username> - Delete user
 • /suspend <username> - Suspend user  
 • /activate <username> - Activate user
@@ -224,56 +282,55 @@ def admin_command(update, context):
 • /renew <username> <days> - Renew user (extend from current)
 • /reset <username> <days> - Reset expiry (from today)
 
-*Information (With Passwords):*
-• /users - List all users with passwords
-• /myinfo <username> - User details with password
+*Information (With UUIDs):*
+• /users - List all users with UUIDs
+• /myinfo <username> - User details with UUID
 • /stats - Server statistics
 
 *Usage Examples:*
-/adduser john pass123 30
-/changepass john newpass456
-/users - See all users with passwords
+/adduser "Customer Name" 30 100
+/changepass user_12345678_abc12345
+/users - See all users with UUIDs
 """
     update.message.reply_text(admin_text, parse_mode='Markdown')
 
 def adduser_command(update, context):
-    """Add new user - PRIVATE (Admin only)"""
+    """Add new user with UUID - PRIVATE (Admin only)"""
     if not is_admin(update.effective_user.id):
         update.message.reply_text("❌ Admin only command")
         return
     
     if len(context.args) < 2:
-        update.message.reply_text("Usage: /adduser <username> <password> [days]\nExample: /adduser john pass123 30")
+        update.message.reply_text("Usage: /adduser <remark> <days> [data_limit]\nExample: /adduser \"John Doe\" 30 100")
         return
     
-    username = context.args[0]
-    password = context.args[1]
-    days = 30  # default 30 days
+    email_remark = context.args[0]
+    try:
+        days = int(context.args[1])
+    except:
+        update.message.reply_text("❌ Invalid days format")
+        return
     
+    data_limit = 0  # default unlimited
     if len(context.args) > 2:
         try:
-            days = int(context.args[2])
+            data_limit = int(context.args[2])
         except:
-            update.message.reply_text("❌ Invalid days format")
+            update.message.reply_text("❌ Invalid data_limit format")
             return
     
     expiry_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
     server_ip = get_server_ip()
     
-    db = get_db()
     try:
-        # Check if user exists
-        existing = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
-        if existing:
-            update.message.reply_text(f"❌ User `{username}` already exists")
-            return
+        user_data = {
+            'email_remark': email_remark,
+            'expires': expiry_date,
+            'bandwidth_limit': data_limit * 1024 * 1024 * 1024,  # Convert to bytes
+            'concurrent_conn': 1
+        }
         
-        # Add user to database
-        db.execute('''
-            INSERT INTO users (username, password, status, expires, concurrent_conn, created_at)
-            VALUES (?, ?, 'active', ?, 1, datetime('now'))
-        ''', (username, password, expiry_date))
-        db.commit()
+        username, user_uuid = create_user_with_uuid(user_data)
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         if sync_config_passwords():
@@ -281,20 +338,23 @@ def adduser_command(update, context):
 ✅ *User Added Successfully*
 
 🌐 Server: `{server_ip}`
+📧 Remark: `{email_remark}`
 👤 Username: `{username}`
-🔐 Password: `{password}`
+🔐 UUID: `{user_uuid}`
 📊 Status: Active
 ⏰ Expires: {expiry_date}
+💾 Data Limit: {'Unlimited' if data_limit == 0 else f'{data_limit} GB'}
 🔗 Connections: 1
 
-*User can now connect to VPN immediately*
+*User can now connect to VPN immediately using the UUID*
 """
         else:
             success_text = f"""
 ⚠️ *User Added But Sync Warning*
 
+📧 Remark: `{email_remark}`
 👤 Username: `{username}`
-🔐 Password: `{password}`
+🔐 UUID: `{user_uuid}`
 ⏰ Expires: {expiry_date}
 
 💡 User added to database but ZIVPN sync had issues.
@@ -307,43 +367,46 @@ def adduser_command(update, context):
     except Exception as e:
         logger.error(f"Error adding user: {e}")
         update.message.reply_text("❌ Error adding user")
-    finally:
-        db.close()
 
 def changepass_command(update, context):
-    """Change user password - PRIVATE (Admin only)"""
+    """Generate new UUID for user - PRIVATE (Admin only)"""
     if not is_admin(update.effective_user.id):
         update.message.reply_text("❌ Admin only command")
         return
     
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /changepass <username> <new_password>\nExample: /changepass john newpass123")
+    if len(context.args) < 1:
+        update.message.reply_text("Usage: /changepass <username>\nExample: /changepass user_12345678_abc12345")
         return
     
     username = context.args[0]
-    new_password = context.args[1]
+    new_uuid = generate_uuid()
     
     db = get_db()
     try:
         # Check if user exists
-        user = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
+        user = db.execute('SELECT username, email_remark FROM users WHERE username = ?', (username,)).fetchone()
         if not user:
             update.message.reply_text(f"❌ User `{username}` not found")
             return
         
-        # Update password
-        db.execute('UPDATE users SET password = ? WHERE username = ?', (new_password, username))
+        # Update UUID
+        db.execute('UPDATE users SET password = ? WHERE username = ?', (new_uuid, username))
         db.commit()
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ Password changed for *{username}*\n🔐 New Password: `{new_password}`", parse_mode='Markdown')
-        logger.info(f"User {username} password changed by admin {update.effective_user.id}")
+        update.message.reply_text(
+            f"✅ New UUID generated for *{user['email_remark'] or username}*\n"
+            f"👤 Username: `{username}`\n"
+            f"🔐 New UUID: `{new_uuid}`", 
+            parse_mode='Markdown'
+        )
+        logger.info(f"User {username} UUID changed by admin {update.effective_user.id}")
         
     except Exception as e:
-        logger.error(f"Error changing password: {e}")
-        update.message.reply_text("❌ Error changing password")
+        logger.error(f"Error changing UUID: {e}")
+        update.message.reply_text("❌ Error changing UUID")
     finally:
         db.close()
 
@@ -361,7 +424,7 @@ def deluser_command(update, context):
     db = get_db()
     try:
         # Check if user exists
-        existing = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
+        existing = db.execute('SELECT username, email_remark FROM users WHERE username = ?', (username,)).fetchone()
         if not existing:
             update.message.reply_text(f"❌ User `{username}` not found")
             return
@@ -373,7 +436,7 @@ def deluser_command(update, context):
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ User `{username}` deleted")
+        update.message.reply_text(f"✅ User `{existing['email_remark'] or username}` deleted")
         logger.info(f"User {username} deleted by admin {update.effective_user.id}")
         
     except Exception as e:
@@ -395,13 +458,14 @@ def suspend_command(update, context):
     username = context.args[0]
     db = get_db()
     try:
+        user = db.execute('SELECT email_remark FROM users WHERE username = ?', (username,)).fetchone()
         db.execute('UPDATE users SET status = "suspended" WHERE username = ?', (username,))
         db.commit()
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ User *{username}* suspended\n\n🔓 Unsuspend: /activate {username}")
+        update.message.reply_text(f"✅ User *{user['email_remark'] or username}* suspended\n\n🔓 Unsuspend: /activate {username}")
         logger.info(f"User {username} suspended by admin {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error suspending user: {e}")
@@ -422,13 +486,14 @@ def activate_command(update, context):
     username = context.args[0]
     db = get_db()
     try:
+        user = db.execute('SELECT email_remark FROM users WHERE username = ?', (username,)).fetchone()
         db.execute('UPDATE users SET status = "active" WHERE username = ?', (username,))
         db.commit()
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ User *{username}* activated")
+        update.message.reply_text(f"✅ User *{user['email_remark'] or username}* activated")
         logger.info(f"User {username} activated by admin {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error activating user: {e}")
@@ -449,13 +514,14 @@ def ban_user(update, context):
     username = context.args[0]
     db = get_db()
     try:
+        user = db.execute('SELECT email_remark FROM users WHERE username = ?', (username,)).fetchone()
         db.execute('UPDATE users SET status = "banned" WHERE username = ?', (username,))
         db.commit()
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ User *{username}* banned\n\n🔓 Unban: /unban {username}")
+        update.message.reply_text(f"✅ User *{user['email_remark'] or username}* banned\n\n🔓 Unban: /unban {username}")
         logger.info(f"User {username} banned by admin {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error banning user: {e}")
@@ -476,13 +542,14 @@ def unban_user(update, context):
     username = context.args[0]
     db = get_db()
     try:
+        user = db.execute('SELECT email_remark FROM users WHERE username = ?', (username,)).fetchone()
         db.execute('UPDATE users SET status = "active" WHERE username = ?', (username,))
         db.commit()
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ User *{username}* unbanned")
+        update.message.reply_text(f"✅ User *{user['email_remark'] or username}* unbanned")
         logger.info(f"User {username} unbanned by admin {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error unbanning user: {e}")
@@ -497,7 +564,7 @@ def renew_command(update, context):
         return
     
     if len(context.args) < 2:
-        update.message.reply_text("Usage: /renew <username> <days>\nExample: /renew john 30")
+        update.message.reply_text("Usage: /renew <username> <days>\nExample: /renew user_12345678_abc12345 30")
         return
     
     username = context.args[0]
@@ -509,7 +576,7 @@ def renew_command(update, context):
     
     db = get_db()
     try:
-        user = db.execute('SELECT username, expires FROM users WHERE username = ?', (username,)).fetchone()
+        user = db.execute('SELECT username, email_remark, expires FROM users WHERE username = ?', (username,)).fetchone()
         if not user:
             update.message.reply_text(f"❌ User `{username}` not found")
             return
@@ -530,7 +597,8 @@ def renew_command(update, context):
         renew_text = f"""
 ✅ *User Renewed*
 
-👤 Username: *{username}*
+📧 Remark: *{user['email_remark'] or username}*
+👤 Username: `{username}`
 ⏰ Old Expiry: {old_expiry_str}
 🔄 Days Added: {days} days
 📅 New Expiry: {new_expiry_str}
@@ -551,7 +619,7 @@ def reset_command(update, context):
         return
     
     if len(context.args) < 2:
-        update.message.reply_text("Usage: /reset <username> <days>\nExample: /reset john 30")
+        update.message.reply_text("Usage: /reset <username> <days>\nExample: /reset user_12345678_abc12345 30")
         return
     
     username = context.args[0]
@@ -563,7 +631,7 @@ def reset_command(update, context):
     
     db = get_db()
     try:
-        user = db.execute('SELECT username, expires FROM users WHERE username = ?', (username,)).fetchone()
+        user = db.execute('SELECT username, email_remark, expires FROM users WHERE username = ?', (username,)).fetchone()
         if not user:
             update.message.reply_text(f"❌ User `{username}` not found")
             return
@@ -578,7 +646,8 @@ def reset_command(update, context):
         reset_text = f"""
 🔄 *User Expiry Reset*
 
-👤 Username: *{username}*
+📧 Remark: *{user['email_remark'] or username}*
+👤 Username: `{username}`
 ⏰ Old Expiry: {old_expiry_str}
 📅 Reset From: Today
 🔄 New Duration: {days} days
@@ -617,7 +686,7 @@ def stats_command(update, context):
         today_new_users = today_users['today_users'] or 0
         
         stats_text = f"""
-📊 *Server Statistics*
+📊 *Server Statistics - UUID Edition*
 👥 Total Users: *{total_users}*
 🟢 Active Users: *{active_users}*
 🔴 Inactive Users: *{total_users - active_users}*
@@ -632,7 +701,7 @@ def stats_command(update, context):
         db.close()
 
 def users_command(update, context):
-    """List all users with passwords - ADMIN ONLY (NO LIMIT)"""
+    """List all users with UUIDs - ADMIN ONLY (NO LIMIT)"""
     if not is_admin(update.effective_user.id):
         update.message.reply_text("❌ Admin only command")
         return
@@ -641,7 +710,7 @@ def users_command(update, context):
     try:
         # NO LIMIT - show ALL users
         users = db.execute('''
-            SELECT username, password, status, expires, bandwidth_used, concurrent_conn
+            SELECT username, password, email_remark, status, expires, bandwidth_used, bandwidth_limit, concurrent_conn
             FROM users
             ORDER BY created_at DESC
         ''').fetchall()  # NO LIMIT 20
@@ -659,10 +728,14 @@ def users_command(update, context):
             for i, user in enumerate(users[:50]):
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                users_text += f"{status_icon} *{user['username']}*\n"
-                users_text += f"🔐 Password: `{user['password']}`\n"
+                data_limit = "Unlimited" if not user['bandwidth_limit'] or user['bandwidth_limit'] == 0 else f"{user['bandwidth_limit'] / 1024 / 1024 / 1024:.0f} GB"
+                
+                users_text += f"{status_icon} *{user['email_remark'] or user['username']}*\n"
+                users_text += f"🔐 UUID: `{user['password']}`\n"
+                users_text += f"👤 Username: `{user['username']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
-                users_text += f"📦 Bandwidth: {bandwidth}\n"
+                users_text += f"💾 Data Limit: {data_limit}\n"
+                users_text += f"📦 Used: {bandwidth}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
                 users_text += "\n"
@@ -674,10 +747,14 @@ def users_command(update, context):
             for user in users:
                 status_icon = "🟢" if user['status'] == 'active' else "🔴"
                 bandwidth = format_bytes(user['bandwidth_used'] or 0)
-                users_text += f"{status_icon} *{user['username']}*\n"
-                users_text += f"🔐 Password: `{user['password']}`\n"
+                data_limit = "Unlimited" if not user['bandwidth_limit'] or user['bandwidth_limit'] == 0 else f"{user['bandwidth_limit'] / 1024 / 1024 / 1024:.0f} GB"
+                
+                users_text += f"{status_icon} *{user['email_remark'] or user['username']}*\n"
+                users_text += f"🔐 UUID: `{user['password']}`\n"
+                users_text += f"👤 Username: `{user['username']}`\n"
                 users_text += f"📊 Status: {user['status']}\n"
-                users_text += f"📦 Bandwidth: {bandwidth}\n"
+                users_text += f"💾 Data Limit: {data_limit}\n"
+                users_text += f"📦 Used: {bandwidth}\n"
                 users_text += f"🔗 Connections: {user['concurrent_conn']}\n"
                 if user['expires']:
                     users_text += f"⏰ Expires: {user['expires']}\n"
@@ -692,20 +769,20 @@ def users_command(update, context):
         db.close()
 
 def myinfo_command(update, context):
-    """Get user information with password - ADMIN ONLY"""
+    """Get user information with UUID - ADMIN ONLY"""
     if not is_admin(update.effective_user.id):
         update.message.reply_text("❌ Admin only command")
         return
         
     if not context.args:
-        update.message.reply_text("Usage: /myinfo <username>\nExample: /myinfo john")
+        update.message.reply_text("Usage: /myinfo <username>\nExample: /myinfo user_12345678_abc12345")
         return
         
     username = context.args[0]
     db = get_db()
     try:
         user = db.execute('''
-            SELECT username, password, status, expires, bandwidth_used, bandwidth_limit,
+            SELECT username, password, email_remark, status, expires, bandwidth_used, bandwidth_limit,
                    speed_limit_up, concurrent_conn, created_at
             FROM users WHERE username = ?
         ''', (username,)).fetchone()
@@ -724,14 +801,19 @@ def myinfo_command(update, context):
                 days_remaining = f" ({days_left} days remaining)" if days_left >= 0 else f" (Expired {-days_left} days ago)"
             except:
                 days_remaining = ""
+        
+        data_limit = "Unlimited" if not user['bandwidth_limit'] or user['bandwidth_limit'] == 0 else f"{user['bandwidth_limit'] / 1024 / 1024 / 1024:.0f} GB"
+        bandwidth_used = format_bytes(user['bandwidth_used'] or 0)
                 
         user_text = f"""
-🔍 *User Information: {user['username']}*
-🔐 Password: `{user['password']}`
+🔍 *User Information: {user['email_remark'] or user['username']}*
+📧 Remark: {user['email_remark'] or 'N/A'}
+👤 Username: `{user['username']}`
+🔐 UUID: `{user['password']}`
 📊 Status: *{user['status'].upper()}*
 ⏰ Expires: *{user['expires'] or 'Never'}{days_remaining}*
-📦 Bandwidth Used: *{format_bytes(user['bandwidth_used'] or 0)}*
-🎯 Bandwidth Limit: *{format_bytes(user['bandwidth_limit'] or 0) if user['bandwidth_limit'] else 'Unlimited'}*
+💾 Data Limit: *{data_limit}*
+📦 Bandwidth Used: *{bandwidth_used}*
 ⚡ Speed Limit: *{user['speed_limit_up'] or 0} MB/s*
 🔗 Max Connections: *{user['concurrent_conn']}*
 📅 Created: *{user['created_at'][:10] if user['created_at'] else 'N/A'}*
@@ -778,7 +860,7 @@ def main():
 
         dp.add_error_handler(error_handler)
 
-        logger.info("🤖 ZIVPN Telegram Bot Started Successfully")
+        logger.info("🤖 ZIVPN Telegram Bot - UUID Edition Started Successfully")
         updater.start_polling()
         updater.idle()
         
