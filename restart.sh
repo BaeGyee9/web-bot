@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZIVPN Enterprise Management Services Restart Script
+# ZIVPN Enterprise Management Services Restart Script - UUID Edition
 # Author: Gemini
 set -euo pipefail
 
@@ -9,7 +9,7 @@ LINE="${B}───────────────────────�
 say(){ echo -e "$1"; }
 
 echo -e "\n$LINE"
-echo -e "${G}🔄 ZIVPN Enterprise Services Restarting...${Z}"
+echo -e "${G}🔄 ZIVPN Enterprise UUID Edition Services Restarting...${Z}"
 echo -e "$LINE"
 
 # ===== Function to Restart and Check Status =====
@@ -49,8 +49,12 @@ restart_service zivpn.service
 #    - They rely on the database and core logic.
 restart_service zivpn-api.service
 restart_service zivpn-web.service
+restart_service zivpn-bot.service
 
-# 3. Trigger and ensure management timers/jobs are running
+# 3. Restart connection manager
+restart_service zivpn-connection.service
+
+# 4. Trigger and ensure management timers/jobs are running
 #    - These are usually 'timers' but restarting the oneshot service ensures configuration is up-to-date.
 say "${Y}* Re-enabling and triggering periodic timers...${Z}"
 sudo systemctl enable --now zivpn-backup.timer 2>/dev/null || true
@@ -58,5 +62,5 @@ sudo systemctl enable --now zivpn-maintenance.timer 2>/dev/null || true
 say "${G}  ✅ Timers enabled/checked.${Z}"
 
 echo -e "\n$LINE"
-echo -e "${G}✨ All ZIVPN Enterprise Services restart sequence completed!${Z}"
+echo -e "${G}✨ All ZIVPN UUID Enterprise Services restart sequence completed!${Z}"
 echo -e "$LINE"
