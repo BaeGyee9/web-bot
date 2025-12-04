@@ -648,5 +648,5 @@ def get_reports():
 
 if __name__ == "__main__":
     import time
-    app.run(host='0.0.0.0', port=os.environ.get("WEB_PORT", 8080), debug=True)
+    app.run(host='0.0.0.0', port=os.environ.get("WEB_PORT", 1943), debug=True)
 
