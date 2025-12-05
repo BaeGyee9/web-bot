@@ -431,7 +431,20 @@ def add_user():
         'plan_type': (request.form.get("plan_type") or "").strip()
     }
     
-    if not user_data['user'] or not user_data['password']:
+    # Auto-generate password if empty
+    if not user_data['password']:
+        import random, string
+        chars = string.ascii_letters + string.digits
+        sections = [8, 4, 4, 4, 12]
+        password_parts = []
+        
+        for length in sections:
+            part = ''.join(random.choice(chars) for _ in range(length))
+            password_parts.append(part)
+        
+        user_data['password'] = '-'.join(password_parts)
+    
+    if not user_data['user']:
         return build_view(err=t['required_fields'])
     
     if user_data['expires'] and user_data['expires'].isdigit():
@@ -453,7 +466,6 @@ def add_user():
                  return build_view(err=t['invalid_port'])
         except ValueError:
              return build_view(err=t['invalid_port'])
-
     
     if not user_data['port']:
         used_ports = {str(u.get('port', '')) for u in load_users() if u.get('port')}
