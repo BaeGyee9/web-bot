@@ -775,54 +775,30 @@ tr:hover {
             {% if msg %}<div class="alert alert-success">{{msg}}</div>{% endif %}
             {% if err %}<div class="alert alert-error">{{err}}</div>{% endif %}
             
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>{{t.user}}</label>
-                    <input name="user" placeholder="{{t.user}}" required>
-                </div>
-                <div class="form-group">
-                    <label>{{t.password}}</label>
-                    <input name="password" placeholder="{{t.password}}" required>
-                </div>
-                <div class="form-group">
-                    <label>{{t.expires}}</label>
-                    <input name="expires" placeholder="2026-01-01">
-                </div>
-                <div class="form-group">
-                    <label>{{t.port}}</label>
-                    <input name="port" placeholder="Auto" type="number" min="6000" max="19999">
-                </div>
-            </div>
+<div style="margin-bottom: 15px;">
+    <button type="button" class="btn btn-primary" onclick="generatePassword()">
+        <i class="fas fa-key"></i> Auto Generate Password
+    </button>
+    <button type="button" class="btn btn-success" onclick="copyPassword()" id="copyBtn">
+        <i class="fas fa-copy"></i> Copy Password
+    </button>
+</div>
 
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>{{t.speed_limit}}</label>
-                    <input name="speed_limit" placeholder="0 = Unlimited" type="number">
-                </div>
-                <div class="form-group">
-                    <label>{{t.bw_limit}}</label>
-                    <input name="bandwidth_limit" placeholder="0 = Unlimited" type="number">
-                </div>
-                <div class="form-group">
-                    <label>{{t.max_conn}}</label>
-                    <input name="concurrent_conn" value="1" type="number" min="1" max="10">
-                </div>
-                <div class="form-group">
-                    <label>Plan Type</label>
-                    <select name="plan_type">
-                        <option value="free">Free</option>
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly" selected>Monthly</option>
-                        <option value="yearly">Yearly</option>
-                    </select>
-                </div>
-            </div>
-
-            <button type="submit" class="btn btn-success btn-block">
-                <i class="fas fa-save"></i> {{t.save_user}}
+<div class="form-grid">
+    <div class="form-group">
+        <label>{{t.user}}</label>
+        <input name="user" id="username" placeholder="{{t.user}}" required>
+    </div>
+    <div class="form-group">
+        <label>{{t.password}} <span id="passStrength"></span></label>
+        <div style="display: flex; gap: 10px;">
+            <input name="password" id="password" placeholder="{{t.password}}" required 
+                   style="flex: 1;" readonly>
+            <button type="button" class="btn btn-primary" onclick="generatePassword()" 
+                    style="white-space: nowrap;">
+                <i class="fas fa-redo"></i>
             </button>
-        </form>
+        </div>
     </div>
 
     <!-- Bulk Operations Section -->
@@ -1115,6 +1091,95 @@ function generateReport() {
             reportResults.innerHTML = '<div class="alert alert-error">Error loading report: ' + e.message + '</div>';
         });
 }
+
+    // Password Generation Functions
+function generatePassword() {
+    // Generate UUID-like password (8-4-4-4-12 format)
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const sections = [8, 4, 4, 4, 12];
+    let password = '';
+    
+    sections.forEach((length, index) => {
+        if (index > 0) password += '-';
+        for (let i = 0; i < length; i++) {
+            password += chars[Math.floor(Math.random() * chars.length)];
+        }
+    });
+    
+    document.getElementById('password').value = password;
+    updatePasswordStrength(password);
+}
+
+function updatePasswordStrength(password) {
+    const strengthElem = document.getElementById('passStrength');
+    if (!password) {
+        strengthElem.textContent = '';
+        return;
+    }
+    
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (/[a-z]/.test(password)) strength++;
+    if (/[A-Z]/.test(password)) strength++;
+    if (/[0-9]/.test(password)) strength++;
+    if (/[^a-zA-Z0-9]/.test(password)) strength++;
+    
+    const colors = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#10b981'];
+    const texts = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong'];
+    
+    strengthElem.innerHTML = `<span style="color: ${colors[strength-1] || '#ef4444'}">${texts[strength-1] || 'Very Weak'}</span>`;
+}
+
+function copyPassword() {
+    const passwordField = document.getElementById('password');
+    if (!passwordField.value) {
+        alert('Please generate a password first!');
+        return;
+    }
+    
+    passwordField.select();
+    passwordField.setSelectionRange(0, 99999);
+    
+    try {
+        navigator.clipboard.writeText(passwordField.value).then(() => {
+            const copyBtn = document.getElementById('copyBtn');
+            const originalText = copyBtn.innerHTML;
+            copyBtn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            copyBtn.style.background = '#10b981';
+            
+            setTimeout(() => {
+                copyBtn.innerHTML = originalText;
+                copyBtn.style.background = '';
+            }, 2000);
+        });
+    } catch (err) {
+        // Fallback for older browsers
+        document.execCommand('copy');
+        const copyBtn = document.getElementById('copyBtn');
+        const originalText = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        copyBtn.style.background = '#10b981';
+        
+        setTimeout(() => {
+            copyBtn.innerHTML = originalText;
+            copyBtn.style.background = '';
+        }, 2000);
+    }
+}
+
+// Auto-generate password on page load
+document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('password') && !document.getElementById('password').value) {
+        generatePassword();
+    }
+});
+
+// Generate password when username is typed
+document.getElementById('username')?.addEventListener('input', function(e) {
+    if (!document.getElementById('password').value) {
+        generatePassword();
+    }
+});
 
 // Close settings when clicking outside
 window.onclick = function(event) {
