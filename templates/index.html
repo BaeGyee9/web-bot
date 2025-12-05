@@ -883,7 +883,7 @@ tr:hover {
             {% if msg %}
             <div class="alert alert-success">
                 {{msg}}
-                {% if msg contains 'Password:' %}
+                {% if 'Password:' in msg %}
                 <div style="margin-top: 10px;">
                     <div class="password-display">
                         <div class="password-value" id="generatedPasswordDisplay">
