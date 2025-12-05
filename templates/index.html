@@ -306,6 +306,49 @@ input:focus, select:focus {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
+/* Password Input Group */
+.password-input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.password-input-group input {
+    flex: 1;
+}
+
+.password-buttons {
+    display: flex;
+    gap: 5px;
+}
+
+.password-btn {
+    padding: 12px 15px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--primary-btn);
+    color: white;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9em;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.password-btn:hover {
+    background: #2563eb;
+    transform: translateY(-1px);
+}
+
+.password-btn.copy {
+    background: var(--success);
+}
+
+.password-btn.copy:hover {
+    background: #05c189;
+}
+
 /* Buttons */
 .btn {
     padding: 12px 20px;
@@ -550,6 +593,44 @@ tr:hover {
     color: white;
 }
 
+/* Password Display */
+.password-display {
+    background: rgba(6, 214, 160, 0.1);
+    border: 1px solid var(--success);
+    border-radius: var(--radius);
+    padding: 15px;
+    margin: 15px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.password-display .password-value {
+    font-family: monospace;
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--success);
+    word-break: break-all;
+}
+
+.password-display .copy-btn {
+    background: var(--success);
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.3s ease;
+}
+
+.password-display .copy-btn:hover {
+    background: #05c189;
+    transform: translateY(-1px);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .container {
@@ -587,6 +668,16 @@ tr:hover {
     .nav-label {
         font-size: 0.7em;
     }
+    
+    .password-input-group {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .password-buttons {
+        width: 100%;
+        justify-content: space-between;
+    }
 }
 
 @media (max-width: 480px) {
@@ -604,6 +695,15 @@ tr:hover {
     
     .nav-label {
         font-size: 0.65em;
+    }
+    
+    .password-buttons {
+        flex-direction: column;
+    }
+    
+    .password-btn {
+        width: 100%;
+        justify-content: center;
     }
 }
     </style>
@@ -746,7 +846,14 @@ tr:hover {
                 {% for u in users %}
                 <tr>
                     <td><strong>{{u.user}}</strong></td>
-                    <td>{{u.password}}</td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 5px;">
+                            <span style="font-family: monospace; font-size: 0.9em;">{{u.password}}</span>
+                            <button class="action-btn" style="background: var(--success); color: white;" onclick="copyToClipboard('{{u.password}}')" title="Copy Password">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </td>
                     <td>{{u.expires or '-'}}</td>
                     <td>
                         <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
@@ -770,23 +877,54 @@ tr:hover {
 
     <!-- Add User Section -->
     <div id="adduser" class="content-section">
-        <form method="post" action="/add" class="form-card">
+        <form method="post" action="/add" class="form-card" onsubmit="return validateAddUserForm()" id="addUserForm">
             <h3 class="form-title"><i class="fas fa-user-plus"></i> {{t.add_user}}</h3>
-            {% if msg %}<div class="alert alert-success">{{msg}}</div>{% endif %}
+            
+            {% if msg %}
+            <div class="alert alert-success">
+                {{msg}}
+                {% if msg contains 'Password:' %}
+                <div style="margin-top: 10px;">
+                    <div class="password-display">
+                        <div class="password-value" id="generatedPasswordDisplay">
+                            {{ msg.split('Password: ')[1] if 'Password: ' in msg }}
+                        </div>
+                        <button type="button" class="copy-btn" onclick="copyGeneratedPassword()">
+                            <i class="fas fa-copy"></i> {{t.copy_password}}
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+            
             {% if err %}<div class="alert alert-error">{{err}}</div>{% endif %}
             
             <div class="form-grid">
                 <div class="form-group">
-                    <label>{{t.user}}</label>
-                    <input name="user" placeholder="{{t.user}}" required>
+                    <label>{{t.user}} *</label>
+                    <input name="user" placeholder="{{t.user}}" required id="usernameInput">
                 </div>
                 <div class="form-group">
-                    <label>{{t.password}}</label>
-                    <input name="password" placeholder="{{t.password}}" required>
+                    <label>{{t.password}} ({{t.generate_password}})</label>
+                    <div class="password-input-group">
+                        <input name="password" placeholder="{{t.generate_password}}" id="passwordInput" readonly>
+                        <div class="password-buttons">
+                            <button type="button" class="password-btn" onclick="generateNewPassword()">
+                                <i class="fas fa-sync-alt"></i> {{t.generate_new}}
+                            </button>
+                            <button type="button" class="password-btn copy" onclick="copyPassword()">
+                                <i class="fas fa-copy"></i> {{t.copy_password}}
+                            </button>
+                        </div>
+                    </div>
+                    <small style="color: var(--bd); margin-top: 5px; display: block;">
+                        <i class="fas fa-info-circle"></i> စကားဝှက်ကို အလိုအလျောက် ထုတ်ပေးမည်
+                    </small>
                 </div>
                 <div class="form-group">
                     <label>{{t.expires}}</label>
-                    <input name="expires" placeholder="2026-01-01">
+                    <input name="expires" placeholder="2026-01-01 or 30 (days)" id="expiresInput">
                 </div>
                 <div class="form-group">
                     <label>{{t.port}}</label>
@@ -797,11 +935,11 @@ tr:hover {
             <div class="form-grid">
                 <div class="form-group">
                     <label>{{t.speed_limit}}</label>
-                    <input name="speed_limit" placeholder="0 = Unlimited" type="number">
+                    <input name="speed_limit" placeholder="0 = Unlimited" type="number" min="0">
                 </div>
                 <div class="form-group">
                     <label>{{t.bw_limit}}</label>
-                    <input name="bandwidth_limit" placeholder="0 = Unlimited" type="number">
+                    <input name="bandwidth_limit" placeholder="0 = Unlimited" type="number" min="0">
                 </div>
                 <div class="form-group">
                     <label>{{t.max_conn}}</label>
@@ -975,6 +1113,15 @@ function showSection(sectionId) {
     // Show selected section and activate nav item
     document.getElementById(sectionId).classList.add('active');
     event.currentTarget.classList.add('active');
+    
+    // If showing adduser section, generate initial password
+    if (sectionId === 'adduser') {
+        setTimeout(() => {
+            if (!document.getElementById('passwordInput').value) {
+                generateNewPassword();
+            }
+        }, 100);
+    }
 }
 
 // Settings Modal Functions
@@ -1015,7 +1162,57 @@ document.addEventListener('DOMContentLoaded', () => {
             option.classList.add('active');
         }
     });
+    
+    // Generate initial password if on add user page
+    if (window.location.hash === '#adduser' || document.getElementById('adduser').classList.contains('active')) {
+        generateNewPassword();
+    }
 });
+
+// Password Generation Functions
+function generateNewPassword() {
+    fetch('/generate_password')
+        .then(response => response.json())
+        .then(data => {
+            const passwordInput = document.getElementById('passwordInput');
+            passwordInput.value = data.password;
+            // Trigger input event to update any listeners
+            passwordInput.dispatchEvent(new Event('input'));
+        })
+        .catch(error => {
+            console.error('Error generating password:', error);
+            // Fallback to client-side generation
+            const password = generatePasswordClient();
+            document.getElementById('passwordInput').value = password;
+        });
+}
+
+function generatePasswordClient() {
+    // Client-side fallback password generation
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let password = '';
+    for (let i = 0; i < 16; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    // Format like UUID for consistency
+    return password;
+}
+
+function copyPassword() {
+    const passwordInput = document.getElementById('passwordInput');
+    if (passwordInput.value) {
+        copyToClipboard(passwordInput.value);
+        showNotification('{{t.password_copied}}');
+    }
+}
+
+function copyGeneratedPassword() {
+    const passwordDisplay = document.getElementById('generatedPasswordDisplay');
+    if (passwordDisplay && passwordDisplay.textContent.trim()) {
+        copyToClipboard(passwordDisplay.textContent.trim());
+        showNotification('{{t.password_copied}}');
+    }
+}
 
 // User Management Functions
 function filterUsers() {
@@ -1114,6 +1311,93 @@ function generateReport() {
         .catch(e => {
             reportResults.innerHTML = '<div class="alert alert-error">Error loading report: ' + e.message + '</div>';
         });
+}
+
+// Utility Functions
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showNotification('{{t.password_copied}}');
+    }).catch(err => {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showNotification('{{t.password_copied}}');
+    });
+}
+
+function showNotification(message) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: var(--success);
+        color: white;
+        padding: 15px 20px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        z-index: 9999;
+        animation: slideIn 0.3s ease;
+    `;
+    notification.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
+    document.body.appendChild(notification);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => {
+            document.body.removeChild(notification);
+        }, 300);
+    }, 3000);
+}
+
+// Add CSS for notifications
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+`;
+document.head.appendChild(style);
+
+// Form Validation
+function validateAddUserForm() {
+    const username = document.getElementById('usernameInput').value.trim();
+    const password = document.getElementById('passwordInput').value.trim();
+    const expires = document.getElementById('expiresInput').value.trim();
+    
+    if (!username) {
+        alert('{{t.username}} လိုအပ်ပါသည်');
+        return false;
+    }
+    
+    // Auto-generate password if empty
+    if (!password) {
+        generateNewPassword();
+        // Wait a moment for password generation
+        setTimeout(() => {
+            document.getElementById('addUserForm').submit();
+        }, 100);
+        return false;
+    }
+    
+    // Validate expires format
+    if (expires && !/^(\d{4}-\d{2}-\d{2}|\d+)$/.test(expires)) {
+        alert('{{t.invalid_exp}}');
+        return false;
+    }
+    
+    return true;
 }
 
 // Close settings when clicking outside
