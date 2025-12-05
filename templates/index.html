@@ -769,37 +769,77 @@ tr:hover {
     </div>
 
     <!-- Add User Section -->
-    <div id="adduser" class="content-section">
-        <form method="post" action="/add" class="form-card">
-            <h3 class="form-title"><i class="fas fa-user-plus"></i> {{t.add_user}}</h3>
-            {% if msg %}<div class="alert alert-success">{{msg}}</div>{% endif %}
-            {% if err %}<div class="alert alert-error">{{err}}</div>{% endif %}
-            
-<div style="margin-bottom: 15px;">
-    <button type="button" class="btn btn-primary" onclick="generatePassword()">
-        <i class="fas fa-key"></i> Auto Generate Password
-    </button>
-    <button type="button" class="btn btn-success" onclick="copyPassword()" id="copyBtn">
-        <i class="fas fa-copy"></i> Copy Password
-    </button>
-</div>
-
-<div class="form-grid">
-    <div class="form-group">
-        <label>{{t.user}}</label>
-        <input name="user" id="username" placeholder="{{t.user}}" required>
-    </div>
-    <div class="form-group">
-        <label>{{t.password}} <span id="passStrength"></span></label>
-        <div style="display: flex; gap: 10px;">
-            <input name="password" id="password" placeholder="{{t.password}}" required 
-                   style="flex: 1;" readonly>
-            <button type="button" class="btn btn-primary" onclick="generatePassword()" 
-                    style="white-space: nowrap;">
-                <i class="fas fa-redo"></i>
+<div id="adduser" class="content-section">
+    <form method="post" action="/add" class="form-card">
+        <h3 class="form-title"><i class="fas fa-user-plus"></i> {{t.add_user}}</h3>
+        {% if msg %}<div class="alert alert-success">{{msg}}</div>{% endif %}
+        {% if err %}<div class="alert alert-error">{{err}}</div>{% endif %}
+        
+        <div style="margin-bottom: 15px;">
+            <button type="button" class="btn btn-primary" onclick="generatePassword()">
+                <i class="fas fa-key"></i> Auto Generate Password
+            </button>
+            <button type="button" class="btn btn-success" onclick="copyPassword()" id="copyBtn">
+                <i class="fas fa-copy"></i> Copy Password
             </button>
         </div>
-    </div>
+        
+        <div class="form-grid">
+            <div class="form-group">
+                <label>{{t.user}}</label>
+                <input name="user" id="username" placeholder="{{t.user}}" required>
+            </div>
+            <div class="form-group">
+                <label>{{t.password}} <span id="passStrength"></span></label>
+                <div style="display: flex; gap: 10px;">
+                    <input name="password" id="password" placeholder="{{t.password}}" required 
+                           style="flex: 1;" readonly>
+                    <button type="button" class="btn btn-primary" onclick="generatePassword()" 
+                            style="white-space: nowrap;">
+                        <i class="fas fa-redo"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>{{t.expires}}</label>
+                <input name="expires" placeholder="2026-01-01">
+            </div>
+            <div class="form-group">
+                <label>{{t.port}}</label>
+                <input name="port" placeholder="Auto" type="number" min="6000" max="19999">
+            </div>
+        </div>
+
+        <div class="form-grid">
+            <div class="form-group">
+                <label>{{t.speed_limit}}</label>
+                <input name="speed_limit" placeholder="0 = Unlimited" type="number">
+            </div>
+            <div class="form-group">
+                <label>{{t.bw_limit}}</label>
+                <input name="bandwidth_limit" placeholder="0 = Unlimited" type="number">
+            </div>
+            <div class="form-group">
+                <label>{{t.max_conn}}</label>
+                <input name="concurrent_conn" value="1" type="number" min="1" max="10">
+            </div>
+            <div class="form-group">
+                <label>Plan Type</label>
+                <select name="plan_type">
+                    <option value="free">Free</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly" selected>Monthly</option>
+                    <option value="yearly">Yearly</option>
+                </select>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-success btn-block">
+            <i class="fas fa-save"></i> {{t.save_user}}
+        </button>
+    </form>
+</div>
 
     <!-- Bulk Operations Section -->
     <div id="bulk" class="content-section">
