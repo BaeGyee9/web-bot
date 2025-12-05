@@ -242,20 +242,31 @@ def adduser_command(update, context):
         update.message.reply_text("❌ Admin only command")
         return
     
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /adduser <username> <password> [days]\nExample: /adduser john pass123 30")
+    if len(context.args) < 1:
+        update.message.reply_text("Usage: /adduser <username> [days]\nExample: /adduser john 30")
         return
     
     username = context.args[0]
-    password = context.args[1]
     days = 30  # default 30 days
     
-    if len(context.args) > 2:
+    if len(context.args) > 1:
         try:
-            days = int(context.args[2])
+            days = int(context.args[1])
         except:
             update.message.reply_text("❌ Invalid days format")
             return
+    
+    # Auto-generate UUID-like password
+    import random, string
+    chars = string.ascii_letters + string.digits
+    sections = [8, 4, 4, 4, 12]
+    password_parts = []
+    
+    for length in sections:
+        part = ''.join(random.choice(chars) for _ in range(length))
+        password_parts.append(part)
+    
+    password = '-'.join(password_parts)
     
     expiry_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
     server_ip = get_server_ip()
