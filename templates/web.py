@@ -2,10 +2,11 @@
 """
 ZIVPN Enterprise Web Panel - External HTML Template
 Downloaded from: https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/web.py
+Updated with auto-generate password and copy functionality
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
-import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime
+import json, re, subprocess, os, tempfile, hmac, sqlite3, datetime, uuid
 from datetime import datetime, timedelta
 import statistics
 import requests
@@ -54,7 +55,11 @@ TRANSLATIONS = {
         'dashboard': 'Dashboard', 'system_status': 'System Status',
         'quick_actions': 'Quick Actions', 'recent_activity': 'Recent Activity',
         'server_info': 'Server Information', 'vpn_status': 'VPN Status',
-        'active_connections': 'Active Connections'
+        'active_connections': 'Active Connections',
+        'generate_password': 'Generate Password',
+        'copy_password': 'Copy',
+        'password_copied': 'Password copied to clipboard!',
+        'generate_new': 'Generate New'
     },
     'my': {
         'title': 'ZIVPN စီမံခန့်ခွဲမှု Panel', 'login_title': 'ZIVPN Panel ဝင်ရန်',
@@ -87,9 +92,19 @@ TRANSLATIONS = {
         'settings': 'ချိန်ညှိချက်များ', 'dashboard': 'ပင်မစာမျက်နှာ',
         'system_status': 'စနစ်အခြေအနေ', 'quick_actions': 'အမြန်လုပ်ဆောင်ချက်များ',
         'recent_activity': 'လတ်တလောလုပ်ဆောင်မှုများ', 'server_info': 'ဆာဗာအချက်အလက်',
-        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ'
+        'vpn_status': 'VPN အခြေအနေ', 'active_connections': 'တက်ကြွလင့်ချိတ်ဆက်မှုများ',
+        'generate_password': 'စကားဝှက် ထုတ်မည်',
+        'copy_password': 'ကူးယူမည်',
+        'password_copied': 'စကားဝှက်ကို clipboard သို့ ကူးယူပြီးပါပြီ!',
+        'generate_new': 'အသစ်ထုတ်မည်'
     }
 }
+
+def generate_secure_password():
+    """Generate a secure password like UUID format"""
+    # Generate UUID style password: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    password = str(uuid.uuid4())
+    return password
 
 def load_html_template():
     """Load HTML template from GitHub or fallback to local template"""
@@ -214,6 +229,10 @@ def load_users():
 def save_user(user_data):
     db = get_db()
     try:
+        # If no password provided, generate one
+        if not user_data.get('password'):
+            user_data['password'] = generate_secure_password()
+            
         db.execute('''
             INSERT OR REPLACE INTO users 
             (username, password, expires, port, status, bandwidth_limit, speed_limit_up, concurrent_conn)
@@ -347,6 +366,15 @@ def set_lang():
         session['lang'] = lang
     return redirect(request.referrer or url_for('index'))
 
+@app.route("/generate_password", methods=["GET"])
+def generate_password():
+    """API endpoint to generate new password"""
+    if not require_login():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    password = generate_secure_password()
+    return jsonify({"password": password})
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     t = g.t
@@ -431,8 +459,12 @@ def add_user():
         'plan_type': (request.form.get("plan_type") or "").strip()
     }
     
-    if not user_data['user'] or not user_data['password']:
+    if not user_data['user']:
         return build_view(err=t['required_fields'])
+    
+    # If password is empty, generate one
+    if not user_data['password']:
+        user_data['password'] = generate_secure_password()
     
     if user_data['expires'] and user_data['expires'].isdigit():
         try:
@@ -466,7 +498,13 @@ def add_user():
 
     save_user(user_data)
     sync_config_passwords()
-    return build_view(msg=t['success_save'])
+    
+    # Return success message with generated password
+    success_msg = t['success_save']
+    if 'password' in user_data:
+        success_msg = f"{t['success_save']}\n🔐 Password: {user_data['password']}"
+    
+    return build_view(msg=success_msg)
 
 @app.route("/delete", methods=["POST"])
 def delete_user_html():
@@ -612,5 +650,5 @@ def update_user():
     return jsonify({"ok": False, "err": "Invalid data"})
 
 if __name__ == "__main__":
-    web_port = int(os.environ.get("WEB_PORT", "19432"))  # ✅ Port ချိန်းရန်
+    web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
