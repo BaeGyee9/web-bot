@@ -1329,6 +1329,13 @@ function copyToClipboard(text) {
     });
 }
 
+function copyGeneratedPassword() {
+    const passwordDisplay = document.getElementById('generatedPasswordDisplay');
+    if (passwordDisplay && passwordDisplay.textContent.trim()) {
+        copyToClipboard(passwordDisplay.textContent.trim());
+    }
+}
+
 function showNotification(message) {
     // Create notification element
     const notification = document.createElement('div');
