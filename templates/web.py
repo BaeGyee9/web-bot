@@ -415,11 +415,18 @@ def build_view(msg="", err=""):
 def index(): 
     return build_view()
 
-@app.route("/add", methods=["POST"])
+# FIX: Changed from POST only to GET and POST (Line 400)
+@app.route("/add", methods=["GET", "POST"])
 def add_user():
     t = g.t
-    if not require_login(): return redirect(url_for('login'))
+    if not require_login(): 
+        return redirect(url_for('login'))
     
+    # Handle GET request - show the form
+    if request.method == "GET":
+        return build_view()
+    
+    # Handle POST request - process form submission
     user_data = {
         'user': (request.form.get("user") or "").strip(),
         'password': (request.form.get("password") or "").strip(),
