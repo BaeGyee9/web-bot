@@ -441,7 +441,24 @@ tr:hover {
     background: var(--success);
 }
 
-/* Settings Modal */
+/* Edit Expiry Button */
+.btn-edit {
+    background: var(--unknown);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.75em;
+    transition: all 0.3s ease;
+}
+
+.btn-edit:hover {
+    background: #d97706;
+    transform: translateY(-1px);
+}
+
+/* Modal Styles */
 .settings-modal {
     display: none;
     position: fixed;
@@ -530,6 +547,67 @@ tr:hover {
     border-color: var(--primary-btn);
     background: var(--primary-btn);
     color: white;
+}
+
+/* Edit Expiry Modal */
+.edit-expiry-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 3000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.edit-expiry-content {
+    background: var(--card);
+    padding: 25px;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    width: 100%;
+    max-width: 400px;
+    border: 1px solid var(--bd);
+}
+
+.edit-expiry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid var(--bd);
+}
+
+.edit-expiry-header h3 {
+    margin: 0;
+    color: var(--primary-btn);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.close-edit-expiry {
+    background: none;
+    border: none;
+    font-size: 1.5em;
+    color: var(--fg);
+    cursor: pointer;
+    padding: 5px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.form-actions .btn {
+    flex: 1;
 }
 
 /* Login Styles */
@@ -801,7 +879,16 @@ tr:hover {
                             </button>
                         </div>
                     </td>
-                    <td>{{u.expires or '-'}}</td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 5px;">
+                            <span>{{u.expires or '-'}}</span>
+                            {% if u.expires %}
+                            <button class="btn-edit" onclick="openEditExpiryModal('{{u.user}}', '{{u.expires}}')" title="Edit Expiry">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
                     <td>
                         <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
                     </td>
@@ -810,7 +897,7 @@ tr:hover {
                             <button class="action-btn btn-danger" onclick="deleteUser('{{u.user}}')" title="Delete">
                                 <i class="fas fa-trash"></i>
                             </button>
-                            <button class="action-btn btn-primary" onclick="editUser('{{u.user}}')" title="Edit">
+                            <button class="action-btn btn-primary" onclick="editUser('{{u.user}}')" title="Edit Password">
                                 <i class="fas fa-edit"></i>
                             </button>
                         </div>
@@ -1027,6 +1114,20 @@ tr:hover {
     </div>
 </div>
 
+<!-- Edit Expiry Modal -->
+<div id="editExpiryModal" class="edit-expiry-modal">
+    <div class="edit-expiry-content">
+        <div class="edit-expiry-header">
+            <h3><i class="fas fa-calendar-alt"></i> Edit User Expiry</h3>
+            <button class="close-edit-expiry" onclick="closeEditExpiryModal()">&times;</button>
+        </div>
+        
+        <div id="editExpiryForm">
+            <!-- Form will be populated by JavaScript -->
+        </div>
+    </div>
+</div>
+
 {% endif %}
 
 <script>
@@ -1164,6 +1265,100 @@ function copyUserPassword(password, button) {
             button.className = originalClass;
         }, 2000);
     }
+}
+
+// NEW: Edit Expiry Functions
+function openEditExpiryModal(username, currentExpiry) {
+    const modal = document.getElementById('editExpiryModal');
+    const form = document.getElementById('editExpiryForm');
+    
+    const formHTML = `
+        <div class="form-group">
+            <label><i class="fas fa-user"></i> Username</label>
+            <input type="text" id="editUsername" value="${username}" readonly class="password-text">
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-calendar-alt"></i> Current Expiry</label>
+            <input type="text" value="${currentExpiry || 'Never'}" readonly class="password-text">
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-calendar-plus"></i> New Expiry Date</label>
+            <input type="date" id="newExpiryDate" required style="width: 100%; padding: 10px; border: 1px solid var(--bd); border-radius: 4px;">
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-bolt"></i> Quick Actions</label>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 5px;">
+                <button type="button" class="btn-edit" onclick="setExpiryDays(7)">+7 Days</button>
+                <button type="button" class="btn-edit" onclick="setExpiryDays(30)">+30 Days</button>
+                <button type="button" class="btn-edit" onclick="setExpiryDays(365)">+1 Year</button>
+            </div>
+        </div>
+        
+        <div class="form-actions">
+            <button type="button" class="btn btn-primary" onclick="saveExpiryChanges()">
+                <i class="fas fa-save"></i> Save Changes
+            </button>
+            <button type="button" class="btn btn-danger" onclick="closeEditExpiryModal()">
+                <i class="fas fa-times"></i> Cancel
+            </button>
+        </div>
+    `;
+    
+    form.innerHTML = formHTML;
+    
+    // Set tomorrow as default date
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    document.getElementById('newExpiryDate').value = tomorrowStr;
+    
+    modal.style.display = 'flex';
+}
+
+function closeEditExpiryModal() {
+    document.getElementById('editExpiryModal').style.display = 'none';
+}
+
+function setExpiryDays(days) {
+    const dateInput = document.getElementById('newExpiryDate');
+    const newDate = new Date();
+    newDate.setDate(newDate.getDate() + days);
+    const formattedDate = newDate.toISOString().split('T')[0];
+    dateInput.value = formattedDate;
+}
+
+function saveExpiryChanges() {
+    const username = document.getElementById('editUsername').value;
+    const newExpiry = document.getElementById('newExpiryDate').value;
+    
+    if (!username || !newExpiry) {
+        alert('Please fill in all fields');
+        return;
+    }
+    
+    // Create form and submit
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/edit_expiry';
+    
+    const usernameInput = document.createElement('input');
+    usernameInput.type = 'hidden';
+    usernameInput.name = 'username';
+    usernameInput.value = username;
+    
+    const expiryInput = document.createElement('input');
+    expiryInput.type = 'hidden';
+    expiryInput.name = 'expiry';
+    expiryInput.value = newExpiry;
+    
+    form.appendChild(usernameInput);
+    form.appendChild(expiryInput);
+    document.body.appendChild(form);
+    
+    form.submit();
 }
 
 // Bulk Action Function
@@ -1316,11 +1511,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
     
-// Close settings when clicking outside
+// Close modals when clicking outside
 window.onclick = function(event) {
     const modal = document.getElementById('settingsModal');
+    const editModal = document.getElementById('editExpiryModal');
+    
     if (event.target === modal) {
         closeSettings();
+    }
+    if (event.target === editModal) {
+        closeEditExpiryModal();
     }
 }
 </script>
