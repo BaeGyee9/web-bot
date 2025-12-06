@@ -404,6 +404,43 @@ tr:hover {
     font-size: 0.9em;
 }
 
+/* Password Copy Button */
+.password-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.password-text {
+    font-family: monospace;
+    background: var(--bg);
+    padding: 4px 8px;
+    border-radius: 4px;
+    flex: 1;
+    word-break: break-all;
+}
+
+.copy-btn {
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--primary-btn);
+    color: white;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.75em;
+    white-space: nowrap;
+}
+
+.copy-btn:hover {
+    background: #2563eb;
+    transform: translateY(-1px);
+}
+
+.copy-btn.copied {
+    background: var(--success);
+}
+
 /* Settings Modal */
 .settings-modal {
     display: none;
@@ -587,6 +624,16 @@ tr:hover {
     .nav-label {
         font-size: 0.7em;
     }
+    
+    .password-cell {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .copy-btn {
+        align-self: flex-start;
+    }
 }
 
 @media (max-width: 480px) {
@@ -746,7 +793,14 @@ tr:hover {
                 {% for u in users %}
                 <tr>
                     <td><strong>{{u.user}}</strong></td>
-                    <td>{{u.password}}</td>
+                    <td>
+                        <div class="password-cell">
+                            <code class="password-text">{{u.password}}</code>
+                            <button type="button" class="copy-btn" onclick="copyUserPassword('{{u.password}}', this)">
+                                <i class="fas fa-copy"></i> Copy
+                            </button>
+                        </div>
+                    </td>
                     <td>{{u.expires or '-'}}</td>
                     <td>
                         <span class="pill pill-{{u.status|lower}}">{{u.status}}</span>
@@ -1074,6 +1128,41 @@ function editUser(username) {
         }).catch(e => {
             alert('Error: ' + e.message);
         });
+    }
+}
+
+// NEW: User Password Copy Function
+function copyUserPassword(password, button) {
+    const originalText = button.innerHTML;
+    const originalClass = button.className;
+    
+    try {
+        navigator.clipboard.writeText(password).then(() => {
+            button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            button.className = 'copy-btn copied';
+            
+            setTimeout(() => {
+                button.innerHTML = '<i class="fas fa-copy"></i> Copy';
+                button.className = originalClass;
+            }, 2000);
+        });
+    } catch (err) {
+        // Fallback method for older browsers
+        const tempInput = document.createElement('input');
+        tempInput.value = password;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        tempInput.setSelectionRange(0, 99999);
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+        
+        button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        button.className = 'copy-btn copied';
+        
+        setTimeout(() => {
+            button.innerHTML = '<i class="fas fa-copy"></i> Copy';
+            button.className = originalClass;
+        }, 2000);
     }
 }
 
