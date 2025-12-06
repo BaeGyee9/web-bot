@@ -415,7 +415,7 @@ def build_view(msg="", err=""):
 def index(): 
     return build_view()
 
-# FIX: Changed from POST only to GET and POST (Line 400)
+# FIX: Changed from POST only to GET and POST
 @app.route("/add", methods=["GET", "POST"])
 def add_user():
     t = g.t
@@ -486,6 +486,52 @@ def add_user():
     save_user(user_data)
     sync_config_passwords()
     return build_view(msg=t['success_save'])
+
+# NEW: Edit expiry route
+@app.route("/edit_expiry", methods=["POST"])
+def edit_expiry():
+    t = g.t
+    if not require_login(): 
+        return redirect(url_for('login'))
+    
+    username = (request.form.get("username") or "").strip()
+    new_expiry = (request.form.get("expiry") or "").strip()
+    
+    if not username or not new_expiry:
+        return build_view(err=t['required_fields'])
+    
+    # Validate expiry date format
+    try:
+        datetime.strptime(new_expiry, "%Y-%m-%d")
+    except ValueError:
+        return build_view(err=t['invalid_exp'])
+    
+    # Update expiry in database
+    db = get_db()
+    try:
+        # Check if user exists
+        user = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
+        if not user:
+            return build_view(err=f"User '{username}' not found")
+        
+        # Update expiry
+        db.execute('UPDATE users SET expires = ? WHERE username = ?', (new_expiry, username))
+        db.commit()
+        
+        # Also update billing table if exists
+        try:
+            db.execute('UPDATE billing SET expires_at = ? WHERE username = ?', (new_expiry, username))
+            db.commit()
+        except:
+            pass  # Ignore if billing table doesn't exist
+        
+        return build_view(msg=f"User '{username}' expiry updated to {new_expiry}")
+        
+    except Exception as e:
+        print(f"Error updating expiry: {e}")
+        return build_view(err="Error updating expiry")
+    finally:
+        db.close()
 
 @app.route("/delete", methods=["POST"])
 def delete_user_html():
