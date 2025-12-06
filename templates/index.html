@@ -1207,20 +1207,26 @@ function copyPassword() {
     }
 }
 
-// Auto-generate password on page load
+// Auto-generate password when page loads and username is typed
 document.addEventListener('DOMContentLoaded', () => {
-    if (document.getElementById('password') && !document.getElementById('password').value) {
-        generatePassword();
+    const usernameField = document.getElementById('username');
+    const passwordField = document.getElementById('password');
+    
+    if (usernameField && passwordField) {
+        // Auto generate when username is typed
+        usernameField.addEventListener('input', function(e) {
+            if (!passwordField.value) {
+                generatePassword();
+            }
+        });
+        
+        // Auto generate on page load if username field has focus
+        if (usernameField === document.activeElement && !passwordField.value) {
+            generatePassword();
+        }
     }
 });
-
-// Generate password when username is typed
-document.getElementById('username')?.addEventListener('input', function(e) {
-    if (!document.getElementById('password').value) {
-        generatePassword();
-    }
-});
-
+    
 // Close settings when clicking outside
 window.onclick = function(event) {
     const modal = document.getElementById('settingsModal');
