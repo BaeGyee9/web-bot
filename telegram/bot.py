@@ -214,7 +214,7 @@ def admin_command(update, context):
 📊 Total Users: *{total_users}* (Active: *{active_users}*)
 
 *User Management:*
-• /adduser <user> <pass> [days] - Add new user
+• /adduser <user> [days] - Add new user (auto password)
 • /changepass <user> <newpass> - Change password
 • /deluser <username> - Delete user
 • /suspend <username> - Suspend user  
@@ -230,7 +230,7 @@ def admin_command(update, context):
 • /stats - Server statistics
 
 *Usage Examples:*
-/adduser john pass123 30
+/adduser john 30
 /changepass john newpass456
 /users - See all users with passwords
 """
