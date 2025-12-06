@@ -215,7 +215,7 @@ def admin_command(update, context):
 
 *User Management:*
 • /adduser <user> [days] - Add new user (auto password)
-• /changepass <user> <newpass> - Change password
+• /changepass <user> [newpass] - Change password (auto or custom)
 • /deluser <username> - Delete user
 • /suspend <username> - Suspend user  
 • /activate <username> - Activate user
@@ -230,12 +230,13 @@ def admin_command(update, context):
 • /stats - Server statistics
 
 *Usage Examples:*
-/adduser john 30
-/changepass john newpass456
+/adduser john 30 - Auto generate password
+/changepass john - Auto generate new password  
+/changepass john mypass123 - Use custom password
 /users - See all users with passwords
 """
     update.message.reply_text(admin_text, parse_mode='Markdown')
-
+    
 def adduser_command(update, context):
     """Add new user - PRIVATE (Admin only)"""
     if not is_admin(update.effective_user.id):
@@ -327,12 +328,30 @@ def changepass_command(update, context):
         update.message.reply_text("❌ Admin only command")
         return
     
-    if len(context.args) < 2:
-        update.message.reply_text("Usage: /changepass <username> <new_password>\nExample: /changepass john newpass123")
+    if len(context.args) < 1:
+        update.message.reply_text("Usage:\n/changepass <username> - Auto generate new password\n/changepass <username> <new_password> - Use custom password\n\nExample:\n/changepass john\n/changepass john mypassword123")
         return
     
     username = context.args[0]
-    new_password = context.args[1]
+    
+    # Check if custom password is provided
+    if len(context.args) > 1:
+        # Use custom password
+        new_password = context.args[1]
+        password_source = "Custom"
+    else:
+        # Auto-generate UUID-like password
+        import random, string
+        chars = string.ascii_letters + string.digits
+        sections = [8, 4, 4, 4, 12]
+        password_parts = []
+        
+        for length in sections:
+            part = ''.join(random.choice(chars) for _ in range(length))
+            password_parts.append(part)
+        
+        new_password = '-'.join(password_parts)
+        password_source = "Auto-generated"
     
     db = get_db()
     try:
@@ -349,8 +368,13 @@ def changepass_command(update, context):
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         sync_config_passwords()
         
-        update.message.reply_text(f"✅ Password changed for *{username}*\n🔐 New Password: `{new_password}`", parse_mode='Markdown')
-        logger.info(f"User {username} password changed by admin {update.effective_user.id}")
+        if password_source == "Auto-generated":
+            message = f"✅ *Password Auto-Generated*\n👤 Username: `{username}`\n🔐 New Password: `{new_password}`\n\n📋 Password copied to clipboard"
+        else:
+            message = f"✅ *Password Manually Changed*\n👤 Username: `{username}`\n🔐 New Password: `{new_password}`"
+        
+        update.message.reply_text(message, parse_mode='Markdown')
+        logger.info(f"User {username} password changed by admin {update.effective_user.id} ({password_source})")
         
     except Exception as e:
         logger.error(f"Error changing password: {e}")
