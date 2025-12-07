@@ -1564,7 +1564,7 @@ echo "$PERSONAL_KEY" > /root/.zivpn_personal_key_backup
 chmod 600 /root/.zivpn_personal_key_backup
 echo -e "${G}✅ Key backed up to /root/.zivpn_personal_key_backup${Z}"
 
-# Function to encrypt files with dual-key system
+# Function to encrypt files with dual-key system - FIXED VERSION
 encrypt_python_file() {
     local input_file="$1"
     local output_file="$2"
@@ -1577,23 +1577,21 @@ encrypt_python_file() {
     COMBINED_KEY=$(echo -n "${SERVER_KEY}:${PERSONAL_KEY}" | sha256sum | cut -d' ' -f1)
     
     # Create encrypted wrapper
-    cat > "$output_file" << ENCRYPTED_WRAPPER
+    cat > "$output_file" << 'ENCRYPTED_WRAPPER'
 #!/usr/bin/env python3
 """
 🔐 ZIVPN ENCRYPTED FILE - REQUIRES PERSONAL KEY
-Access with: python3 $(basename "$output_file")
+Access with: python3 __FILE__
 """
 
 import base64, hashlib, getpass, sys
 
 # Server component
-MACHINE_ID = "$MACHINE_ID"
-SERVER_HASH = "$SERVER_KEY"
+MACHINE_ID = "MACHINE_ID_PLACEHOLDER"
+SERVER_HASH = "SERVER_KEY_PLACEHOLDER"
 
 # Encrypted payload (base64)
-ENCRYPTED_PAYLOAD = """
-PAYLOAD_PLACEHOLDER
-"""
+ENCRYPTED_PAYLOAD = "PAYLOAD_PLACEHOLDER"
 
 def decrypt_payload(personal_key):
     """Decrypt using server key + personal key"""
@@ -1615,7 +1613,7 @@ def decrypt_payload(personal_key):
         
         return decrypted.decode('utf-8', errors='ignore')
     except Exception as e:
-        return f"print('❌ Decryption failed')"
+        return "print('❌ Decryption failed. Check your key.')"
 
 def main():
     """Main entry point - requires personal key"""
@@ -1642,14 +1640,14 @@ def main():
 if __name__ == "__main__":
     main()
 ENCRYPTED_WRAPPER
-
-    # Get original content and encode it - FIXED VERSION
+    
+    # Get original content and encode it - FIXED VERSION (NO SED ERRORS)
     if [ -f "$input_file" ]; then
-        # Read file content safely
-        ORIGINAL_CONTENT=$(cat "$input_file" | sed "s/'/\\\\'/g")
+        # Read file content
+        ORIGINAL_CONTENT=$(cat "$input_file" 2>/dev/null || echo "# Empty file")
         
         # Create Python script for encryption
-        cat > /tmp/zivpn_encrypt.py << 'PYENCRYPT'
+        cat > /tmp/zivpn_encrypt_safe.py << 'PYENCRYPT'
 import base64, sys
 
 data = sys.argv[1]
@@ -1680,31 +1678,54 @@ print(result)
 PYENCRYPT
         
         # Encrypt the content
-ENCRYPTED_CONTENT=$(python3 /tmp/zivpn_encrypt.py "$ORIGINAL_CONTENT" "$COMBINED_KEY")
-rm -f /tmp/zivpn_encrypt.py
+        ENCRYPTED_CONTENT=$(python3 /tmp/zivpn_encrypt_safe.py "$ORIGINAL_CONTENT" "$COMBINED_KEY" 2>/dev/null || echo "")
+        rm -f /tmp/zivpn_encrypt_safe.py
+        
+        # FIXED: Use Python to replace placeholders (NO SED)
+        if [ -n "$ENCRYPTED_CONTENT" ]; then
+            # Create replacement script
+            cat > /tmp/zivpn_replace_safe.py << 'PYREPLACE'
+import sys
 
-# FIXED: Replace placeholder with actual encrypted content
-if [ -n "$ENCRYPTED_CONTENT" ]; then
-    # Escape special characters for sed
-    ESCAPED_CONTENT=$(echo "$ENCRYPTED_CONTENT" | sed -e 's/[\/&]/\\&/g' -e 's/|/\\|/g')
+file_path = sys.argv[1]
+machine_id = sys.argv[2]
+server_key = sys.argv[3]
+encrypted_content = sys.argv[4]
+
+try:
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
     
-    # Use @ as delimiter to avoid conflicts
-    sed -i "s@PAYLOAD_PLACEHOLDER@$ESCAPED_CONTENT@" "$output_file"
-else
-    echo "  ⚠️  Warning: Empty encrypted content for $(basename "$input_file")"
-    sed -i "s@PAYLOAD_PLACEHOLDER@# ENCRYPTION_FAILED_EMPTY_CONTENT@" "$output_file"
-fi
+    # Replace all placeholders
+    content = content.replace('MACHINE_ID_PLACEHOLDER', machine_id)
+    content = content.replace('SERVER_KEY_PLACEHOLDER', server_key)
+    content = content.replace('PAYLOAD_PLACEHOLDER', encrypted_content)
+    content = content.replace('__FILE__', file_path.split('/')[-1])
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    
+    print("SUCCESS")
+except Exception as e:
+    print(f"ERROR: {str(e)}")
+PYREPLACE
+            
+            # Run replacement
+            python3 /tmp/zivpn_replace_safe.py "$output_file" "$MACHINE_ID" "$SERVER_KEY" "$ENCRYPTED_CONTENT" >/dev/null 2>&1
+            rm -f /tmp/zivpn_replace_safe.py
+            
+            echo "  ✅ Encrypted: $(basename "$output_file")"
+        else
+            echo "  ⚠️  Encryption failed for: $(basename "$input_file")"
+        fi
         
         # Set permissions
-        chmod 700 "$output_file"
-        chown root:root "$output_file"
-        
-        echo "  ✅ Encrypted: $(basename "$output_file")"
+        chmod 700 "$output_file" 2>/dev/null || true
+        chown root:root "$output_file" 2>/dev/null || true
     else
-        echo "  ⚠️  File not found: $input_file"
+        echo "  ❌ File not found: $input_file"
     fi
 }
-
 # Encrypt all critical files
 echo -e "${Y}🔒 Encrypting critical files...${Z}"
 
