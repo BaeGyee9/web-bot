@@ -1556,8 +1556,8 @@ echo -e "${G}================================================${Z}"
 echo ""
 
 # Wait for user to copy key
-echo -e "${Y}⏳ Waiting 15 seconds for you to copy the key...${Z}"
-sleep 15
+echo -e "${Y}⏳ Waiting 10 seconds for you to copy the key...${Z}"
+sleep 10
 
 # Also save to backup file
 echo "$PERSONAL_KEY" > /root/.zivpn_personal_key_backup
@@ -1601,19 +1601,21 @@ def decrypt_payload(personal_key):
         # Combine keys
         combined = f"{SERVER_HASH}:{personal_key}"
         decryption_key = hashlib.sha256(combined.encode()).hexdigest()
-        
-        # Simple XOR decryption (for demonstration)
-        # In production, use proper encryption like AES
-        decoded = base64.b85decode(ENCRYPTED_PAYLOAD)
-        decrypted = bytearray()
         key_bytes = decryption_key.encode()
+        
+        if len(key_bytes) == 0:
+            key_bytes = b'default'
+        
+        # Decode and decrypt
+        decoded = base64.b85decode(ENCRYPTED_PAYLOAD.encode())
+        decrypted = bytearray()
         
         for i in range(len(decoded)):
             decrypted.append(decoded[i] ^ key_bytes[i % len(key_bytes)])
         
-        return decrypted.decode('utf-8')
+        return decrypted.decode('utf-8', errors='ignore')
     except Exception as e:
-        return f"print('❌ Decryption failed: {str(e)[:50]}')"
+        return f"print('❌ Decryption failed')"
 
 def main():
     """Main entry point - requires personal key"""
@@ -1623,14 +1625,14 @@ def main():
     # Get personal key
     personal_key = getpass.getpass("Enter your PERSONAL DECRYPTION KEY: ")
     
-    if not personal_key or len(personal_key) < 12:
-        print("❌ Invalid key. Access denied.")
+    if not personal_key:
+        print("❌ No key provided. Access denied.")
         sys.exit(1)
     
     # Try to decrypt
     decrypted_code = decrypt_payload(personal_key)
     
-    if "print('❌" in decrypted_code:
+    if "❌" in decrypted_code:
         print("❌ Decryption failed. Check your key.")
         sys.exit(1)
     
@@ -1641,21 +1643,45 @@ if __name__ == "__main__":
     main()
 ENCRYPTED_WRAPPER
 
-    # Get original content and encode it
+    # Get original content and encode it - FIXED VERSION
     if [ -f "$input_file" ]; then
-        ORIGINAL_CONTENT=$(cat "$input_file")
-        # Simple XOR encryption (for real use, implement proper encryption)
-        ENCRYPTED_CONTENT=$(echo -n "$ORIGINAL_CONTENT" | python3 -c "
-import sys, base64
-data = sys.stdin.read()
-# Simple XOR with combined key
-key = '$COMBINED_KEY'
-key_bytes = key.encode()
+        # Read file content safely
+        ORIGINAL_CONTENT=$(cat "$input_file" | sed "s/'/\\\\'/g")
+        
+        # Create Python script for encryption
+        cat > /tmp/zivpn_encrypt.py << 'PYENCRYPT'
+import base64, sys
+
+data = sys.argv[1]
+key = sys.argv[2]
+
+# Handle empty data
+if not data:
+    data = "# Empty file"
+
+# Prepare key
+key_bytes = key.encode('utf-8')
+if len(key_bytes) == 0:
+    key_bytes = b'default_key'
+
+# XOR encryption
 encrypted = bytearray()
 for i in range(len(data)):
-    encrypted.append(ord(data[i]) ^ key_bytes[i % len(key_bytes)])
-print(base64.b85encode(encrypted).decode())
-")
+    try:
+        char_code = ord(data[i])
+        key_byte = key_bytes[i % len(key_bytes)]
+        encrypted.append(char_code ^ key_byte)
+    except:
+        encrypted.append(0)
+
+# Encode as base85
+result = base64.b85encode(bytes(encrypted)).decode('utf-8')
+print(result)
+PYENCRYPT
+        
+        # Encrypt the content
+        ENCRYPTED_CONTENT=$(python3 /tmp/zivpn_encrypt.py "$ORIGINAL_CONTENT" "$COMBINED_KEY")
+        rm -f /tmp/zivpn_encrypt.py
         
         # Replace placeholder with actual encrypted content
         sed -i "s|PAYLOAD_PLACEHOLDER|$ENCRYPTED_CONTENT|" "$output_file"
@@ -1665,6 +1691,8 @@ print(base64.b85encode(encrypted).decode())
         chown root:root "$output_file"
         
         echo "  ✅ Encrypted: $(basename "$output_file")"
+    else
+        echo "  ⚠️  File not found: $input_file"
     fi
 }
 
