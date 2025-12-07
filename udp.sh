@@ -1680,11 +1680,20 @@ print(result)
 PYENCRYPT
         
         # Encrypt the content
-        ENCRYPTED_CONTENT=$(python3 /tmp/zivpn_encrypt.py "$ORIGINAL_CONTENT" "$COMBINED_KEY")
-        rm -f /tmp/zivpn_encrypt.py
-        
-        # Replace placeholder with actual encrypted content
-        sed -i "s|PAYLOAD_PLACEHOLDER|$ENCRYPTED_CONTENT|" "$output_file"
+ENCRYPTED_CONTENT=$(python3 /tmp/zivpn_encrypt.py "$ORIGINAL_CONTENT" "$COMBINED_KEY")
+rm -f /tmp/zivpn_encrypt.py
+
+# FIXED: Replace placeholder with actual encrypted content
+if [ -n "$ENCRYPTED_CONTENT" ]; then
+    # Escape special characters for sed
+    ESCAPED_CONTENT=$(echo "$ENCRYPTED_CONTENT" | sed -e 's/[\/&]/\\&/g' -e 's/|/\\|/g')
+    
+    # Use @ as delimiter to avoid conflicts
+    sed -i "s@PAYLOAD_PLACEHOLDER@$ESCAPED_CONTENT@" "$output_file"
+else
+    echo "  ⚠️  Warning: Empty encrypted content for $(basename "$input_file")"
+    sed -i "s@PAYLOAD_PLACEHOLDER@# ENCRYPTION_FAILED_EMPTY_CONTENT@" "$output_file"
+fi
         
         # Set permissions
         chmod 700 "$output_file"
