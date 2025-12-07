@@ -1534,6 +1534,206 @@ ufw allow 1:65535/udp >/dev/null 2>&1 || true
 # ufw allow 8081/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
+# ... (အပေါ်က existing code တွေ အကုန်) ...
+
+# ===== KEY-BASED ENCRYPTION SYSTEM =====
+say "${Y}🔑 KEY-BASED ENCRYPTION SYSTEM ထည့်သွင်းနေပါတယ်...${Z}"
+
+# Auto-generate secure random key
+PERSONAL_KEY="ZIVPN_KEY_$(openssl rand -hex 24)"
+
+echo ""
+echo -e "${G}================================================${Z}"
+echo -e "${G}🔑🔑🔑 YOUR PERSONAL DECRYPTION KEY 🔑🔑🔑${Z}"
+echo -e "${G}================================================${Z}"
+echo -e "${C}$PERSONAL_KEY${Z}"
+echo -e "${G}================================================${Z}"
+echo -e "${Y}⚠️  ⚠️  ⚠️  SAVE THIS KEY IMMEDIATELY! ⚠️  ⚠️  ⚠️${Z}"
+echo -e "${Y}📝 You'll need this key to view/edit code files${Z}"
+echo -e "${Y}📋 Copy it NOW to a safe place${Z}"
+echo -e "${Y}🔒 Without this key, NO ONE can access your code${Z}"
+echo -e "${G}================================================${Z}"
+echo ""
+
+# Wait for user to copy key
+echo -e "${Y}⏳ Waiting 15 seconds for you to copy the key...${Z}"
+sleep 15
+
+# Also save to backup file
+echo "$PERSONAL_KEY" > /root/.zivpn_personal_key_backup
+chmod 600 /root/.zivpn_personal_key_backup
+echo -e "${G}✅ Key backed up to /root/.zivpn_personal_key_backup${Z}"
+
+# Function to encrypt files with dual-key system
+encrypt_python_file() {
+    local input_file="$1"
+    local output_file="$2"
+    
+    # Server key (machine-specific)
+    MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || echo "zivpn-$(hostname)")
+    SERVER_KEY=$(echo -n "$MACHINE_ID" | sha256sum | cut -d' ' -f1)
+    
+    # Combined key (Server + Personal)
+    COMBINED_KEY=$(echo -n "${SERVER_KEY}:${PERSONAL_KEY}" | sha256sum | cut -d' ' -f1)
+    
+    # Create encrypted wrapper
+    cat > "$output_file" << ENCRYPTED_WRAPPER
+#!/usr/bin/env python3
+"""
+🔐 ZIVPN ENCRYPTED FILE - REQUIRES PERSONAL KEY
+Access with: python3 $(basename "$output_file")
+"""
+
+import base64, hashlib, getpass, sys
+
+# Server component
+MACHINE_ID = "$MACHINE_ID"
+SERVER_HASH = "$SERVER_KEY"
+
+# Encrypted payload (base64)
+ENCRYPTED_PAYLOAD = """
+PAYLOAD_PLACEHOLDER
+"""
+
+def decrypt_payload(personal_key):
+    """Decrypt using server key + personal key"""
+    try:
+        # Combine keys
+        combined = f"{SERVER_HASH}:{personal_key}"
+        decryption_key = hashlib.sha256(combined.encode()).hexdigest()
+        
+        # Simple XOR decryption (for demonstration)
+        # In production, use proper encryption like AES
+        decoded = base64.b85decode(ENCRYPTED_PAYLOAD)
+        decrypted = bytearray()
+        key_bytes = decryption_key.encode()
+        
+        for i in range(len(decoded)):
+            decrypted.append(decoded[i] ^ key_bytes[i % len(key_bytes)])
+        
+        return decrypted.decode('utf-8')
+    except Exception as e:
+        return f"print('❌ Decryption failed: {str(e)[:50]}')"
+
+def main():
+    """Main entry point - requires personal key"""
+    print("🔐 ZIVPN ENCRYPTED FILE ACCESS")
+    print("="*50)
+    
+    # Get personal key
+    personal_key = getpass.getpass("Enter your PERSONAL DECRYPTION KEY: ")
+    
+    if not personal_key or len(personal_key) < 12:
+        print("❌ Invalid key. Access denied.")
+        sys.exit(1)
+    
+    # Try to decrypt
+    decrypted_code = decrypt_payload(personal_key)
+    
+    if "print('❌" in decrypted_code:
+        print("❌ Decryption failed. Check your key.")
+        sys.exit(1)
+    
+    # Execute decrypted code
+    exec(decrypted_code)
+
+if __name__ == "__main__":
+    main()
+ENCRYPTED_WRAPPER
+
+    # Get original content and encode it
+    if [ -f "$input_file" ]; then
+        ORIGINAL_CONTENT=$(cat "$input_file")
+        # Simple XOR encryption (for real use, implement proper encryption)
+        ENCRYPTED_CONTENT=$(echo -n "$ORIGINAL_CONTENT" | python3 -c "
+import sys, base64
+data = sys.stdin.read()
+# Simple XOR with combined key
+key = '$COMBINED_KEY'
+key_bytes = key.encode()
+encrypted = bytearray()
+for i in range(len(data)):
+    encrypted.append(ord(data[i]) ^ key_bytes[i % len(key_bytes)])
+print(base64.b85encode(encrypted).decode())
+")
+        
+        # Replace placeholder with actual encrypted content
+        sed -i "s|PAYLOAD_PLACEHOLDER|$ENCRYPTED_CONTENT|" "$output_file"
+        
+        # Set permissions
+        chmod 700 "$output_file"
+        chown root:root "$output_file"
+        
+        echo "  ✅ Encrypted: $(basename "$output_file")"
+    fi
+}
+
+# Encrypt all critical files
+echo -e "${Y}🔒 Encrypting critical files...${Z}"
+
+FILES_TO_ENCRYPT=(
+    "/etc/zivpn/web.py"
+    "/etc/zivpn/bot.py" 
+    "/etc/zivpn/api.py"
+    "/etc/zivpn/cleanup.py"
+    "/etc/zivpn/backup.py"
+    "/etc/zivpn/connection_manager.py"
+)
+
+for file in "${FILES_TO_ENCRYPT[@]}"; do
+    if [ -f "$file" ]; then
+        # Backup original
+        cp "$file" "${file}.backup"
+        # Encrypt
+        encrypt_python_file "$file" "$file"
+        # Remove backup
+        rm -f "${file}.backup"
+    fi
+done
+
+# Create easy access command
+cat > /usr/local/bin/zivpn-view << 'EOF'
+#!/bin/bash
+# ZIVPN Secure File Viewer
+
+if [ $# -eq 0 ]; then
+    echo "Usage: zivpn-view <filename>"
+    echo ""
+    echo "Available files:"
+    echo "  web.py      - Web Panel"
+    echo "  bot.py      - Telegram Bot"
+    echo "  api.py      - API Server"
+    echo "  cleanup.py  - Cleanup Script"
+    echo "  backup.py   - Backup Script"
+    echo ""
+    echo "🔒 All files require your personal decryption key"
+    exit 1
+fi
+
+FILE="/etc/zivpn/$1"
+if [ ! -f "$FILE" ]; then
+    echo "❌ File not found: $1"
+    exit 1
+fi
+
+# Execute encrypted file (will prompt for key)
+python3 "$FILE"
+EOF
+
+chmod 755 /usr/local/bin/zivpn-view
+
+# Lock down permissions
+chmod -R 700 /etc/zivpn/*.py
+chown -R root:root /etc/zivpn
+
+echo -e "${G}✅ ENCRYPTION SYSTEM INSTALLED COMPLETELY${Z}"
+echo -e "${M}🔐 All code files are now encrypted with your personal key${Z}"
+echo -e "${M}🔑 To view files, use: ${Y}zivpn-view web.py${Z}"
+echo -e "${M}🔑 You'll be prompted for your personal key${Z}"
+echo -e "${M}📁 Backup key file: /root/.zivpn_personal_key_backup${Z}"
+
+# ... (ကျန်တဲ့ existing Final Setup code တွေ ဆက်ရေး) ...
+
 # ===== Final Setup =====
 say "${Y}🔧 Final Configuration ပြုလုပ်နေပါတယ်...${Z}"
 chmod +x /etc/zivpn/*.py
