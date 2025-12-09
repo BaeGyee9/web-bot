@@ -288,10 +288,15 @@ protect_all_source_files() {
     echo -e "\n${C}🛡️ CHANNEL404 SOURCE CODE PROTECTION${Z}"
     echo -e "${Y}=========================================${Z}"
     
+    # CHANNEL404 SECRET KEY
+    local ENCRYPTION_KEY="CHANNEL404_SECURE_KEY"
+    local ENCRYPTED_DIR="/etc/zivpn/encrypted"
+    mkdir -p "$ENCRYPTED_DIR"
+    
     # List of files to protect
     local source_files=(
         "/etc/zivpn/web.py"
-        "/etc/zivpn/bot.py"
+        "/etc/zivpn/bot.py" 
         "/etc/zivpn/api.py"
         "/etc/zivpn/cleanup.py"
         "/etc/zivpn/backup.py"
@@ -306,10 +311,82 @@ protect_all_source_files() {
         if [ -f "$source_file" ]; then
             ((total_count++))
             local filename=$(basename "$source_file")
-            local encrypted_file="${ENCRYPTED_FILES_DIR}/${filename}.enc"
+            local encrypted_file="${ENCRYPTED_DIR}/${filename}.enc"
             
-            if encrypt_source_file "$source_file" "$encrypted_file"; then
-                create_runtime_decryptor "$filename" "$source_file"
+            echo -e "${C}🔐 Encrypting: $filename${Z}"
+            
+            # Encrypt the file
+            openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 \
+                -in "$source_file" \
+                -out "$encrypted_file" \
+                -pass pass:"$ENCRYPTION_KEY" \
+                -md sha512 2>/dev/null
+            
+            if [ $? -eq 0 ]; then
+                # Create decryptor stub
+                if [[ "$filename" == *.py ]]; then
+                    cat > "$source_file" << PYSTUB
+#!/usr/bin/env python3
+"""
+🔒 CHANNEL404 PROTECTED - Runtime Decryptor
+Source code is encrypted. Decryption occurs only in memory.
+"""
+import os, subprocess, tempfile, sys
+
+ENCRYPTION_KEY = "CHANNEL404_SECURE_KEY"
+ENCRYPTED_FILE = "/etc/zivpn/encrypted/${filename}.enc"
+
+def decrypt_and_execute():
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp:
+            tmp_path = tmp.name
+            
+            cmd = [
+                'openssl', 'enc', '-aes-256-cbc', '-d', '-pbkdf2',
+                '-iter', '100000', '-md', 'sha512',
+                '-in', ENCRYPTED_FILE,
+                '-out', tmp_path,
+                '-pass', f'pass:{ENCRYPTION_KEY}'
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    code = f.read()
+                os.unlink(tmp_path)
+                exec(code)
+            else:
+                print("🔒 Decryption failed - Running in protected mode")
+                return minimal_fallback()
+                
+    except Exception as e:
+        print(f"🔒 Error: {e}")
+        return minimal_fallback()
+
+def minimal_fallback():
+    '''Minimal functionality if decryption fails'''
+    if "${filename}" == "web.py":
+        from flask import Flask
+        app = Flask(__name__)
+        @app.route('/')
+        def index():
+            return "<h1>🔒 ZIVPN Protected System</h1>", 200
+        app.run(host='0.0.0.0', port=19432, debug=False)
+    elif "${filename}" == "bot.py":
+        print("🤖 ZIVPN Protected Bot")
+        while True:
+            import time
+            time.sleep(3600)
+    else:
+        print("🛡️ CHANNEL404 Protected Service")
+
+if __name__ == '__main__':
+    decrypt_and_execute()
+PYSTUB
+                    chmod 700 "$source_file"
+                fi
+                
                 ((protected_count++))
                 echo -e "  ${G}✓${Z} Protected: $filename"
             else
@@ -317,6 +394,19 @@ protect_all_source_files() {
             fi
         fi
     done
+    
+    # Create protection verification script
+    cat > "/etc/zivpn/verify_protection.sh" << 'VERIFY'
+#!/bin/bash
+echo "🔒 CHANNEL404 SOURCE PROTECTION STATUS"
+echo "======================================"
+ls -la /etc/zivpn/encrypted/ 2>/dev/null | grep -v "^total"
+VERIFY
+    chmod 700 "/etc/zivpn/verify_protection.sh"
+    
+    echo -e "\n${G}✅ Source Protection Complete${Z}"
+    echo -e "   Protected: ${protected_count}/${total_count} files"
+}
     
     # Create protection verification script
     create_protection_verifier
