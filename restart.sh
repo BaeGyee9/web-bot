@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZIVPN Enterprise Management Services Restart Script
+# ZIVPN Encrypted Services Restart Script
 # Author: Gemini
 set -euo pipefail
 
@@ -9,54 +9,93 @@ LINE="${B}───────────────────────�
 say(){ echo -e "$1"; }
 
 echo -e "\n$LINE"
-echo -e "${G}🔄 ZIVPN Enterprise Services Restarting...${Z}"
+echo -e "${G}🔄 ZIVPN Encrypted Services Restarting...${Z}"
 echo -e "$LINE"
 
-# ===== Function to Restart and Check Status =====
-restart_service() {
-    SERVICE_NAME=$1
-    say "${C}* Restarting ${SERVICE_NAME}...${Z}"
+# Check if master key exists
+KEY_FILE="/etc/zivpn/.master_key.dat"
+if [ ! -f "$KEY_FILE" ]; then
+    echo -e "${R}❌ ERROR: Master key not found!${Z}"
+    echo -e "${Y}Please restore master key from your backup.${Z}"
+    exit 1
+fi
 
-    # Stop the service first
-    if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
-        sudo systemctl stop "${SERVICE_NAME}"
+# Verify encrypted files exist
+ENCRYPTED_DIR="/etc/zivpn/encrypted"
+if [ ! -d "$ENCRYPTED_DIR" ] || [ -z "$(ls -A $ENCRYPTED_DIR 2>/dev/null)" ]; then
+    echo -e "${R}❌ ERROR: Encrypted files not found!${Z}"
+    echo -e "${Y}Reinstall may be necessary.${Z}"
+    exit 1
+fi
+
+echo -e "${C}🔍 Checking encrypted files...${Z}"
+for enc_file in "$ENCRYPTED_DIR"/*.enc; do
+    if [ -f "$enc_file" ]; then
+        filename=$(basename "$enc_file")
+        echo -e "${G}  ✓ ${filename}${Z}"
     fi
+done
 
-    # Start/Restart the service
-    if sudo systemctl restart "${SERVICE_NAME}"; then
-        # Wait a moment for the service to actually start up
+# Restart services in order
+echo -e "\n${Y}🔄 Restarting services...${Z}"
+
+services=(
+    "zivpn.service"
+    "zivpn-web.service" 
+    "zivpn-bot.service"
+    "zivpn-api.service"
+    "zivpn-connection.service"
+)
+
+for service in "${services[@]}"; do
+    echo -e "${C}* Restarting ${service}...${Z}"
+    
+    # Stop if running
+    if systemctl is-active --quiet "$service"; then
+        systemctl stop "$service"
+        sleep 1
+    fi
+    
+    # Start the service
+    if systemctl start "$service"; then
         sleep 2
-        
-        if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
-            say "${G}  ✅ ${SERVICE_NAME} restarted and running.${Z}"
+        if systemctl is-active --quiet "$service"; then
+            echo -e "${G}  ✅ ${service} restarted successfully${Z}"
         else
-            say "${R}  ❌ ERROR: ${SERVICE_NAME} failed to start. Checking logs...${Z}"
-            sudo journalctl -u "${SERVICE_NAME}" --since "30 seconds ago" | tail -n 10
-            # Continue to next service even if one fails, but show error.
+            echo -e "${R}  ❌ ${service} failed to start${Z}"
+            echo -e "${Y}  Checking logs:${Z}"
+            journalctl -u "$service" --since "1 minute ago" --no-pager | tail -5
         fi
     else
-        say "${R}  ❌ ERROR: Could not execute restart command for ${SERVICE_NAME}.${Z}"
+        echo -e "${R}  ❌ Failed to execute restart for ${service}${Z}"
     fi
-}
+done
 
-# ===== Execution Order =====
-
-# 1. Restart core VPN service (zivpn.service)
-#    - Must be done first as it handles traffic.
-restart_service zivpn.service
-
-# 2. Restart management components (API, Web)
-#    - They rely on the database and core logic.
-restart_service zivpn-api.service
-restart_service zivpn-web.service
-
-# 3. Trigger and ensure management timers/jobs are running
-#    - These are usually 'timers' but restarting the oneshot service ensures configuration is up-to-date.
-say "${Y}* Re-enabling and triggering periodic timers...${Z}"
-sudo systemctl enable --now zivpn-backup.timer 2>/dev/null || true
-sudo systemctl enable --now zivpn-maintenance.timer 2>/dev/null || true
-say "${G}  ✅ Timers enabled/checked.${Z}"
+# Enable and restart timers
+echo -e "\n${Y}⏰ Restarting timers...${Z}"
+timer_services=("zivpn-backup.timer" "zivpn-cleanup.timer")
+for timer in "${timer_services[@]}"; do
+    systemctl enable --now "$timer" 2>/dev/null && \
+    echo -e "${G}  ✅ ${timer} enabled${Z}" || \
+    echo -e "${Y}  ⚠️  ${timer} already enabled${Z}"
+done
 
 echo -e "\n$LINE"
-echo -e "${G}✨ All ZIVPN Enterprise Services restart sequence completed!${Z}"
+echo -e "${G}✨ All ZIVPN Encrypted Services restarted successfully!${Z}"
 echo -e "$LINE"
+
+# Display status
+echo -e "\n${C}📊 Current Service Status:${Z}"
+for service in "${services[@]}"; do
+    status=$(systemctl is-active "$service")
+    if [ "$status" = "active" ]; then
+        echo -e "${G}  ✓ ${service}: ACTIVE${Z}"
+    else
+        echo -e "${R}  ✗ ${service}: INACTIVE${Z}"
+    fi
+done
+
+echo -e "\n${Y}🔧 Useful Commands:${Z}"
+echo -e "  ${C}• View logs:${Z} journalctl -u zivpn-web.service -f"
+echo -e "  ${C}• Decrypt code:${Z} zivpn-decrypt"
+echo -e "  ${C}• Check master key:${Z} cat /etc/zivpn/.master_key.dat"
