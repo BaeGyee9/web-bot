@@ -223,29 +223,20 @@ create_encrypted_wrapper() {
     
     # Encrypt it
     local encrypted_file="${ENCRYPTED_DIR}/${filename}.enc"
+    encrypt_file "$temp_py" "$encrypted_file"
     
-    # Encrypt the file
-    if openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$temp_py" -out "$encrypted_file" -pass pass:"$ENCRYPTION_KEY" 2>/dev/null; then
-        shred -u "$temp_py" 2>/dev/null || rm -f "$temp_py"
-        chmod 600 "$encrypted_file"
-    else
-        echo "Failed to encrypt $filename"
-        rm -f "$temp_py"
-        return 1
-    fi
-    
-    # Create wrapper that auto-decrypts at runtime - USE SINGLE QUOTES to prevent expansion
+    # Create wrapper that auto-decrypts at runtime
     local wrapper_file="/etc/zivpn/${filename}"
     
-    cat > "$wrapper_file" << 'WRAPPER_EOF'
+    cat > "$wrapper_file" << WRAPPER_EOF
 #!/usr/bin/env python3
 """
 ZIVPN Encrypted Module - Auto-decrypt at runtime
 SECURITY: AES-256 Encrypted Source Code
 """
-import os, sys, subprocess, tempfile, hashlib
+import os, sys, subprocess, tempfile, hashlib, atexit
 
-ENCRYPTED_FILE = "ENCRYPTED_FILE_PLACEHOLDER"
+ENCRYPTED_FILE = "${encrypted_file}"
 KEY_FILE = "/etc/zivpn/.master_key.dat"
 
 def get_master_key():
@@ -314,9 +305,6 @@ if __name__ == '__main__':
     decrypt_and_execute()
 WRAPPER_EOF
 
-    # Replace placeholder with actual encrypted file path
-    sed -i "s|ENCRYPTED_FILE_PLACEHOLDER|${encrypted_file}|g" "$wrapper_file"
-    
     chmod +x "$wrapper_file"
 }
 
@@ -440,7 +428,7 @@ fi
 
 # Get Telegram Bot Token (optional)
 read -r -p "Telegram Bot Token (Optional, Enter=Skip): " BOT_TOKEN
-BOT_TOKEN="${BOT_TOKEN:-8330676362:AAEOWePTUJAAwUwqawvoiOehY3OvWD8LYqA}"
+BOT_TOKEN="${BOT_TOKEN:-8079105459:AAFNww6keJvnGJi4DpAHZGESBcL9ytFxqA4}"
 
 {
   echo "WEB_ADMIN_USER=${WEB_USER}"
@@ -492,7 +480,8 @@ say "${Y}🌐 Web Panel နှင့် Templates များ ထည့်သ�
 mkdir -p /etc/zivpn/templates
 
 # Download web.py content FIRST, then encrypt it
-WEB_PY_CONTENT='''#!/usr/bin/env python3
+cat > /tmp/web_py_content.py << 'WEBCONTENT'
+#!/usr/bin/env python3
 """
 ZIVPN Enterprise Web Panel - ENCRYPTED VERSION
 """
