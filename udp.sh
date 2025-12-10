@@ -1157,7 +1157,9 @@ def update_user():
 if __name__ == "__main__":
     web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
-'''
+WEBCONTENT
+
+WEB_PY_CONTENT=$(cat /tmp/web_py_content.py)
 
 # Create encrypted web.py
 create_encrypted_wrapper "web.py" "$WEB_PY_CONTENT"
@@ -1173,7 +1175,8 @@ if curl -fsSL -o "$BOT_TEMP_FILE" "$BOT_PY_URL"; then
     rm -f "$BOT_TEMP_FILE"
 else
     # Fallback bot content if download fails
-    BOT_FALLBACK_CONTENT='''#!/usr/bin/env python3
+    cat > /tmp/bot_fallback.py << 'BOT_FALLBACK'
+#!/usr/bin/env python3
 """
 ZIVPN Telegram Bot - ENCRYPTED VERSION
 """
@@ -1188,12 +1191,118 @@ import json
 import tempfile
 import subprocess
 
-# ... [full bot.py code from your original file] ...
+# Your bot.py code here
+logging.basicConfig(level=logging.INFO)
+
+class ZIVPNBot:
+    def __init__(self, token, db_path):
+        self.token = token
+        self.db_path = db_path
+        self.updater = Updater(token, use_context=True)
+        self.dp = self.updater.dispatcher
+        
+        # Register handlers
+        self.dp.add_handler(CommandHandler("start", self.start))
+        self.dp.add_handler(CommandHandler("users", self.list_users))
+        self.dp.add_handler(CommandHandler("adduser", self.add_user))
+        self.dp.add_handler(CommandHandler("status", self.status))
+        
+    def get_db(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+        
+    def start(self, update, context):
+        update.message.reply_text("Welcome to ZIVPN Bot! Use /help for commands.")
+        
+    def list_users(self, update, context):
+        db = self.get_db()
+        users = db.execute('SELECT username, status, expires FROM users LIMIT 50').fetchall()
+        db.close()
+        
+        if not users:
+            update.message.reply_text("No users found.")
+            return
+            
+        message = "📊 Users List:\n"
+        for user in users:
+            message += f"• {user['username']} - {user['status']} - Exp: {user['expires'] or 'Never'}\n"
+            
+        update.message.reply_text(message[:4000])  # Telegram message limit
+        
+    def add_user(self, update, context):
+        # Only admin can add users
+        if str(update.effective_user.id) != "123456789":  # Replace with admin ID
+            update.message.reply_text("⚠️ Admin only command.")
+            return
+            
+        # Parse arguments
+        if len(context.args) < 1:
+            update.message.reply_text("Usage: /adduser <username> [days]")
+            return
+            
+        username = context.args[0]
+        days = int(context.args[1]) if len(context.args) > 1 else 30
+        
+        db = self.get_db()
+        try:
+            import secrets
+            password = secrets.token_urlsafe(12)
+            expires = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+            
+            db.execute('''
+                INSERT INTO users (username, password, expires, status)
+                VALUES (?, ?, ?, 'active')
+            ''', (username, password, expires))
+            db.commit()
+            
+            update.message.reply_text(f"✅ User added!\nUsername: {username}\nPassword: {password}\nExpires: {expires}")
+        except Exception as e:
+            update.message.reply_text(f"❌ Error: {str(e)}")
+        finally:
+            db.close()
+            
+    def status(self, update, context):
+        db = self.get_db()
+        stats = db.execute('''
+            SELECT COUNT(*) as total_users,
+                   SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_users,
+                   SUM(bandwidth_used) / 1024 / 1024 / 1024 as total_gb
+            FROM users
+        ''').fetchone()
+        db.close()
+        
+        message = f"""
+📊 ZIVPN Status:
+• Total Users: {stats['total_users']}
+• Active Users: {stats['active_users']}
+• Bandwidth Used: {stats['total_gb'] or 0:.2f} GB
+• Server: {socket.gethostname()}
+        """
+        update.message.reply_text(message)
+        
+    def start_bot(self):
+        self.updater.start_polling()
+        self.updater.idle()
+
+def main():
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        print("❌ No Telegram Bot Token found in environment.")
+        return
+        
+    db_path = os.environ.get("DATABASE_PATH", "/etc/zivpn/zivpn.db")
+    
+    bot = ZIVPNBot(token, db_path)
+    print("🤖 ZIVPN Bot starting...")
+    bot.start_bot()
 
 if __name__ == "__main__":
     main()
-'''
-    create_encrypted_wrapper "bot.py" "$BOT_FALLBACK_CONTENT"
+BOT_FALLBACK
+    
+    BOT_PY_CONTENT=$(cat /tmp/bot_fallback.py)
+    create_encrypted_wrapper "bot.py" "$BOT_PY_CONTENT"
 fi
 
 # ===== Download index.html template =====
@@ -1294,7 +1403,8 @@ HTML
 fi
 
 # ===== Create encrypted API service =====
-API_PY_CONTENT='''from flask import Flask, jsonify, request
+cat > /tmp/api_content.py << 'APICONTENT'
+from flask import Flask, jsonify, request
 import sqlite3, datetime
 from datetime import timedelta
 import os
@@ -1365,12 +1475,14 @@ def update_bandwidth(username):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8081)
-'''
+APICONTENT
 
+API_PY_CONTENT=$(cat /tmp/api_content.py)
 create_encrypted_wrapper "api.py" "$API_PY_CONTENT"
 
 # ===== Create encrypted cleanup script =====
-CLEANUP_PY_CONTENT='''import sqlite3
+cat > /tmp/cleanup_content.py << 'CLEANUPCONTENT'
+import sqlite3
 import datetime
 import os
 import subprocess
@@ -1455,12 +1567,14 @@ def daily_cleanup():
 
 if __name__ == '__main__':
     daily_cleanup()
-'''
+CLEANUPCONTENT
 
+CLEANUP_PY_CONTENT=$(cat /tmp/cleanup_content.py)
 create_encrypted_wrapper "cleanup.py" "$CLEANUP_PY_CONTENT"
 
 # ===== Create encrypted backup script =====
-BACKUP_PY_CONTENT='''import sqlite3, shutil, datetime, os, gzip
+cat > /tmp/backup_content.py << 'BACKUPCONTENT'
+import sqlite3, shutil, datetime, os, gzip
 
 BACKUP_DIR = "/etc/zivpn/backups"
 DATABASE_PATH = "/etc/zivpn/zivpn.db"
@@ -1489,12 +1603,14 @@ def backup_database():
 
 if __name__ == '__main__':
     backup_database()
-'''
+BACKUPCONTENT
 
+BACKUP_PY_CONTENT=$(cat /tmp/backup_content.py)
 create_encrypted_wrapper "backup.py" "$BACKUP_PY_CONTENT"
 
 # ===== Create encrypted connection manager =====
-CONNECTION_MANAGER_CONTENT='''import sqlite3
+cat > /tmp/connection_content.py << 'CONNECTIONCONTENT'
+import sqlite3
 import subprocess
 import time
 import threading
@@ -1622,8 +1738,9 @@ if __name__ == "__main__":
             time.sleep(60)
     except KeyboardInterrupt:
         print("Stopping Connection Manager...")
-'''
+CONNECTIONCONTENT
 
+CONNECTION_MANAGER_CONTENT=$(cat /tmp/connection_content.py)
 create_encrypted_wrapper "connection_manager.py" "$CONNECTION_MANAGER_CONTENT"
 
 # ===== systemd Services =====
