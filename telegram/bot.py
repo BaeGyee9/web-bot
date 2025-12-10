@@ -174,7 +174,7 @@ def help_command(update, context):
         help_text += """
 🛠️ *Admin Commands:*
 /admin - Admin panel
-/adduser <user> [days] - Add user (auto password)
+/adduser <user> [pass] [days] - Add user (auto or custom password)
 /changepass <user> [newpass] - Change password (auto or custom)
 /deluser <username> - Delete user
 /suspend <username> - Suspend user
@@ -243,30 +243,51 @@ def adduser_command(update, context):
         return
     
     if len(context.args) < 1:
-        update.message.reply_text("Usage: /adduser <username> [days]\nExample: /adduser john 30")
+        update.message.reply_text("Usage:\n/adduser <username> <password> [days] - Custom password\n/adduser <username> [days] - Auto generate password\n\nExample:\n/adduser john mypass123 30\n/adduser john 30")
         return
     
     username = context.args[0]
     days = 30  # default 30 days
     
-    if len(context.args) > 1:
+    # Check arguments
+    if len(context.args) == 1:
+        # Format: /adduser username (auto password, default 30 days)
+        password_source = "Auto-generated"
+        
+    elif len(context.args) == 2:
+        # Could be: /adduser username days (auto password)
+        # OR: /adduser username password (custom password, default days)
         try:
+            # Try to parse second argument as days
             days = int(context.args[1])
-        except:
+            password_source = "Auto-generated"
+        except ValueError:
+            # If not a number, treat as custom password
+            password = context.args[1]
+            password_source = "Custom"
+    
+    elif len(context.args) >= 3:
+        # Format: /adduser username password days
+        try:
+            password = context.args[1]
+            days = int(context.args[2])
+            password_source = "Custom"
+        except ValueError:
             update.message.reply_text("❌ Invalid days format")
             return
     
-    # Auto-generate UUID-like password
-    import random, string
-    chars = string.ascii_letters + string.digits
-    sections = [8, 4, 4, 4, 12]
-    password_parts = []
-    
-    for length in sections:
-        part = ''.join(random.choice(chars) for _ in range(length))
-        password_parts.append(part)
-    
-    password = '-'.join(password_parts)
+    # Auto-generate password if not provided
+    if password_source == "Auto-generated":
+        import random, string
+        chars = string.ascii_letters + string.digits
+        sections = [8, 4, 4, 4, 12]
+        password_parts = []
+        
+        for length in sections:
+            part = ''.join(random.choice(chars) for _ in range(length))
+            password_parts.append(part)
+        
+        password = '-'.join(password_parts)
     
     expiry_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
     server_ip = get_server_ip()
@@ -288,8 +309,22 @@ def adduser_command(update, context):
         
         # ✅ SYNC PASSWORDS TO ZIVPN CONFIG
         if sync_config_passwords():
-            success_text = f"""
-✅ *User Added Successfully*
+            if password_source == "Auto-generated":
+                success_text = f"""
+✅ *User Added Successfully (Auto Password)*
+
+🌐 Server: `{server_ip}`
+👤 Username: `{username}`
+🔐 Password: `{password}`
+📊 Status: Active
+⏰ Expires: {expiry_date}
+🔗 Connections: 1
+
+*User can now connect to VPN immediately*
+"""
+            else:
+                success_text = f"""
+✅ *User Added Successfully (Custom Password)*
 
 🌐 Server: `{server_ip}`
 👤 Username: `{username}`
@@ -313,7 +348,7 @@ def adduser_command(update, context):
 """
         
         update.message.reply_text(success_text, parse_mode='Markdown')
-        logger.info(f"User {username} added by admin {update.effective_user.id}")
+        logger.info(f"User {username} added by admin {update.effective_user.id} ({password_source})")
         
     except Exception as e:
         logger.error(f"Error adding user: {e}")
