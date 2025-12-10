@@ -174,8 +174,8 @@ def help_command(update, context):
         help_text += """
 🛠️ *Admin Commands:*
 /admin - Admin panel
-/adduser <user> <pass> [days] - Add user
-/changepass <user> <newpass> - Change password
+/adduser <user> [days] - Add user (auto password)
+/changepass <user> [newpass] - Change password (auto or custom)
 /deluser <username> - Delete user
 /suspend <username> - Suspend user
 /activate <username> - Activate user
@@ -195,7 +195,6 @@ def help_command(update, context):
 """
     
     update.message.reply_text(help_text, parse_mode='Markdown')
-
 def admin_command(update, context):
     """Admin panel - PRIVATE (Admin only)"""
     if not is_admin(update.effective_user.id):
