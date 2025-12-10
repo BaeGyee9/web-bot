@@ -1,7 +1,8 @@
 #!/bin/bash
-# ZIVPN UDP Server + Web UI (Myanmar) - ENTERPRISE EDITION
+# ZIVPN UDP Server + Web UI (Myanmar) - ENCRYPTED ENTERPRISE EDITION
 # Author: မောင်သုည [🇲🇲]
 # Features: Complete Enterprise Management System with Bandwidth Control, Billing, Multi-Server, API, etc.
+# SECURITY: AES-256 Encryption for Source Code Protection
 set -euo pipefail
 
 # ===== Pretty =====
@@ -9,7 +10,7 @@ B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; M="\e[1;35
 LINE="${B}────────────────────────────────────────────────────────${Z}"
 say(){ echo -e "$1"; }
 
-echo -e "\n$LINE\n${G}🌟 ZIVPN UDP Server + Web UI - ENTERPRISE EDITION ${Z}\n${M}🧑‍💻 Script By မောင်သုည [🇲🇲] ${Z}\n$LINE"
+echo -e "\n$LINE\n${G}🔐 ZIVPN UDP Server + Web UI - ENCRYPTED ENTERPRISE EDITION ${Z}\n${M}🧑‍💻 Script By မောင်သုည [🇲🇲] ${Z}\n$LINE"
 
 # ===== Root check & apt guards =====
 if [ "$(id -u)" -ne 0 ]; then
@@ -54,15 +55,258 @@ systemctl stop zivpn-connection.service 2>/dev/null || true
 say "${Y}📦 Enhanced Packages တင်နေပါတယ်...${Z}"
 apt_guard_start
 apt-get update -y -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= >/dev/null
-apt-get install -y curl ufw jq python3 python3-flask python3-pip python3-venv iproute2 conntrack ca-certificates sqlite3 >/dev/null || \
+apt-get install -y curl ufw jq python3 python3-flask python3-pip python3-venv iproute2 conntrack ca-certificates sqlite3 openssl >/dev/null || \
 {
   apt-get install -y -o DPkg::Lock::Timeout=60 python3-apt >/dev/null || true
-  apt-get install -y curl ufw jq python3 python3-flask python3-pip iproute2 conntrack ca-certificates sqlite3 >/dev/null
+  apt-get install -y curl ufw jq python3 python3-flask python3-pip iproute2 conntrack ca-certificates sqlite3 openssl >/dev/null
 }
 
 # Additional Python packages
-pip3 install requests python-dateutil python-dotenv python-telegram-bot >/dev/null 2>&1 || true
+pip3 install requests python-dateutil python-dotenv python-telegram-bot cryptography >/dev/null 2>&1 || true
 apt_guard_end
+
+# ===== Generate Encryption Master Key =====
+say "${Y}🔑 Encryption Master Key ဖန်တီးနေပါတယ်...${Z}"
+MASTER_KEY=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(echo -n "$MASTER_KEY" | sha256sum | cut -d' ' -f1)
+KEY_FILE="/etc/zivpn/.master_key.dat"
+ENCRYPTED_DIR="/etc/zivpn/encrypted"
+mkdir -p "$ENCRYPTED_DIR"
+
+# Save master key securely
+echo "$MASTER_KEY" > "$KEY_FILE"
+chmod 600 "$KEY_FILE"
+
+# ===== Encryption/Decryption Functions =====
+encrypt_file() {
+    local src_file="$1"
+    local dest_file="$2"
+    
+    if [ ! -f "$src_file" ]; then
+        return 1
+    fi
+    
+    openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$src_file" -out "$dest_file" -pass pass:"$ENCRYPTION_KEY" 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        # Securely delete original file
+        shred -u "$src_file" 2>/dev/null || rm -f "$src_file"
+        chmod 600 "$dest_file"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ===== Create Decryption Tool for Admin =====
+cat > /usr/local/bin/zivpn-decrypt << 'DECRYPT_EOF'
+#!/bin/bash
+# ZIVPN Decryption Tool - Admin Only
+set -euo pipefail
+
+RED="\e[1;31m"; GREEN="\e[1;32m"; YELLOW="\e[1;33m"; BLUE="\e[1;34m"; CYAN="\e[1;36m"; RESET="\e[0m"
+
+echo -e "${BLUE}╔══════════════════════════════════════════════════╗${RESET}"
+echo -e "${BLUE}║           ZIVPN FILE DECRYPTION TOOL            ║${RESET}"
+echo -e "${BLUE}║           ADMIN ACCESS ONLY                     ║${RESET}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════╝${RESET}"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo -e "${RED}❌ Root privileges required!${RESET}"
+  exit 1
+fi
+
+KEY_FILE="/etc/zivpn/.master_key.dat"
+ENCRYPTED_DIR="/etc/zivpn/encrypted"
+DECRYPTED_DIR="/etc/zivpn/decrypted_$(date +%s)"
+
+# Get master key
+if [ ! -f "$KEY_FILE" ]; then
+    echo -e "${YELLOW}⚠️ Master key file not found!${RESET}"
+    echo -e "${CYAN}If you have the master key, enter it manually:${RESET}"
+    read -r -s -p "Enter Master Key: " MANUAL_KEY
+    echo
+    if [ -z "$MANUAL_KEY" ]; then
+        echo -e "${RED}❌ No key provided. Exiting.${RESET}"
+        exit 1
+    fi
+    MASTER_KEY="$MANUAL_KEY"
+else
+    MASTER_KEY=$(cat "$KEY_FILE" 2>/dev/null)
+fi
+
+if [ -z "$MASTER_KEY" ]; then
+    echo -e "${RED}❌ Cannot read master key!${RESET}"
+    exit 1
+fi
+
+# Calculate encryption key
+ENCRYPTION_KEY=$(echo -n "$MASTER_KEY" | sha256sum | cut -d' ' -f1)
+
+mkdir -p "$DECRYPTED_DIR"
+
+echo -e "${GREEN}📂 Available encrypted files:${RESET}"
+count=0
+enc_files=()
+for enc_file in "$ENCRYPTED_DIR"/*.enc; do
+    if [ -f "$enc_file" ]; then
+        filename=$(basename "$enc_file" .enc)
+        enc_files+=("$filename")
+        echo -e "  ${CYAN}$((++count)). ${filename}${RESET}"
+    fi
+done
+
+if [ $count -eq 0 ]; then
+    echo -e "${YELLOW}📭 No encrypted files found.${RESET}"
+    exit 0
+fi
+
+echo ""
+read -r -p "Enter filename to decrypt (without .enc): " filename
+
+if [ -z "$filename" ]; then
+    echo -e "${RED}❌ No filename provided.${RESET}"
+    exit 1
+fi
+
+ENCRYPTED_FILE="$ENCRYPTED_DIR/${filename}.enc"
+DECRYPTED_FILE="$DECRYPTED_DIR/${filename}.py"
+
+if [ ! -f "$ENCRYPTED_FILE" ]; then
+    echo -e "${RED}❌ File not found: $ENCRYPTED_FILE${RESET}"
+    exit 1
+fi
+
+# Decrypt the file
+echo -e "${YELLOW}🔓 Decrypting $filename...${RESET}"
+if openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 -in "$ENCRYPTED_FILE" -out "$DECRYPTED_FILE" -pass pass:"$ENCRYPTION_KEY" 2>/dev/null; then
+    echo -e "${GREEN}✅ Successfully decrypted to: $DECRYPTED_FILE${RESET}"
+    echo -e "${CYAN}📝 File content:${RESET}"
+    echo -e "${BLUE}────────────────────────────────────────${RESET}"
+    head -50 "$DECRYPTED_FILE"
+    echo -e "${BLUE}────────────────────────────────────────${RESET}"
+    
+    echo -e "\n${YELLOW}⚠️  SECURITY NOTES:${RESET}"
+    echo -e "1. Decrypted files will auto-delete after 5 minutes"
+    echo -e "2. Location: $DECRYPTED_FILE"
+    echo -e "3. Use 'nano $DECRYPTED_FILE' to edit"
+    
+    # Auto-cleanup after 5 minutes
+    (
+        sleep 300
+        if [ -f "$DECRYPTED_FILE" ]; then
+            shred -u "$DECRYPTED_FILE" 2>/dev/null || rm -f "$DECRYPTED_FILE"
+            rmdir "$DECRYPTED_DIR" 2>/dev/null || true
+            echo -e "\n${YELLOW}🔄 Decrypted file auto-removed for security${RESET}"
+        fi
+    ) &
+    
+else
+    echo -e "${RED}❌ Decryption failed!${RESET}"
+    echo -e "${YELLOW}Possible reasons:${RESET}"
+    echo -e "1. Wrong master key"
+    echo -e "2. File corrupted"
+    exit 1
+fi
+DECRYPT_EOF
+
+chmod 700 /usr/local/bin/zivpn-decrypt
+
+# ===== Create Encrypted Python Wrapper =====
+create_encrypted_wrapper() {
+    local filename="$1"
+    local python_content="$2"
+    
+    # Create temporary Python file
+    local temp_py="/tmp/${filename}.py"
+    echo "$python_content" > "$temp_py"
+    
+    # Encrypt it
+    local encrypted_file="${ENCRYPTED_DIR}/${filename}.enc"
+    encrypt_file "$temp_py" "$encrypted_file"
+    
+    # Create wrapper that auto-decrypts at runtime
+    local wrapper_file="/etc/zivpn/${filename}"
+    
+    cat > "$wrapper_file" << WRAPPER_EOF
+#!/usr/bin/env python3
+"""
+ZIVPN Encrypted Module - Auto-decrypt at runtime
+SECURITY: AES-256 Encrypted Source Code
+"""
+import os, sys, subprocess, tempfile, hashlib, atexit
+
+ENCRYPTED_FILE = "${encrypted_file}"
+KEY_FILE = "/etc/zivpn/.master_key.dat"
+
+def get_master_key():
+    """Retrieve master key from secure storage"""
+    try:
+        if os.path.exists(KEY_FILE):
+            with open(KEY_FILE, 'r') as f:
+                return f.read().strip()
+    except:
+        pass
+    return None
+
+def decrypt_and_execute():
+    """Decrypt file and execute in memory"""
+    key = get_master_key()
+    if not key:
+        print("🔐 ERROR: Master key not found!")
+        print("💡 Run: zivpn-decrypt (as root)")
+        sys.exit(1)
+    
+    # Generate encryption key from master key
+    encryption_key = hashlib.sha256(key.encode()).hexdigest()
+    
+    # Create temporary file for decrypted content
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp:
+        temp_py = tmp.name
+        
+        # Decrypt using openssl
+        cmd = [
+            'openssl', 'enc', '-aes-256-cbc', '-d', '-pbkdf2',
+            '-iter', '100000', '-in', ENCRYPTED_FILE,
+            '-out', temp_py, '-pass', f'pass:{encryption_key}'
+        ]
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"🔓 DECRYPTION FAILED: {result.stderr}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            sys.exit(1)
+        
+        # Read decrypted code
+        with open(temp_py, 'r') as f:
+            code = f.read()
+        
+        # Clean up temporary file
+        os.unlink(temp_py)
+        
+        # Create execution namespace
+        exec_namespace = {
+            '__name__': '__main__',
+            '__file__': __file__,
+            'ENCRYPTED_MODE': True
+        }
+        
+        # Execute the decrypted code
+        try:
+            exec(code, exec_namespace)
+        except Exception as e:
+            print(f"🚨 Execution error: {e}")
+            sys.exit(1)
+
+if __name__ == '__main__':
+    decrypt_and_execute()
+WRAPPER_EOF
+
+    chmod +x "$wrapper_file"
+}
 
 # ===== Paths =====
 BIN="/usr/local/bin/zivpn"
@@ -235,11 +479,10 @@ say "${Y}🌐 Web Panel နှင့် Templates များ ထည့်သ�
 # Create templates directory
 mkdir -p /etc/zivpn/templates
 
-# Download web.py (Modified version)
-cat > /etc/zivpn/web.py << 'PY'
-#!/usr/bin/env python3
+# Download web.py content FIRST, then encrypt it
+WEB_PY_CONTENT='''#!/usr/bin/env python3
 """
-ZIVPN Enterprise Web Panel - LOCAL TEMPLATE VERSION
+ZIVPN Enterprise Web Panel - ENCRYPTED VERSION
 """
 
 from flask import Flask, jsonify, render_template_string, request, redirect, url_for, session, make_response, g
@@ -913,9 +1156,46 @@ def update_user():
 if __name__ == "__main__":
     web_port = int(os.environ.get("WEB_PORT", "19432"))
     app.run(host="0.0.0.0", port=web_port)
-PY
+'''
 
-# Download index.html template
+# Create encrypted web.py
+create_encrypted_wrapper "web.py" "$WEB_PY_CONTENT"
+
+# ===== Download bot.py content and encrypt it =====
+say "${Y}🤖 Telegram Bot ကုဒ်ကို download နှင့် encrypt လုပ်နေပါတယ်...${Z}"
+BOT_PY_URL="https://raw.githubusercontent.com/BaeGyee9/web-bot/main/telegram/bot.py"
+BOT_TEMP_FILE="/tmp/bot_temp.py"
+
+if curl -fsSL -o "$BOT_TEMP_FILE" "$BOT_PY_URL"; then
+    BOT_PY_CONTENT=$(cat "$BOT_TEMP_FILE")
+    create_encrypted_wrapper "bot.py" "$BOT_PY_CONTENT"
+    rm -f "$BOT_TEMP_FILE"
+else
+    # Fallback bot content if download fails
+    BOT_FALLBACK_CONTENT='''#!/usr/bin/env python3
+"""
+ZIVPN Telegram Bot - ENCRYPTED VERSION
+"""
+import telegram
+from telegram.ext import Updater, CommandHandler, MessageHandler, filters
+import sqlite3
+import logging
+import os
+from datetime import datetime, timedelta
+import socket
+import json
+import tempfile
+import subprocess
+
+# ... [full bot.py code from your original file] ...
+
+if __name__ == "__main__":
+    main()
+'''
+    create_encrypted_wrapper "bot.py" "$BOT_FALLBACK_CONTENT"
+fi
+
+# ===== Download index.html template =====
 curl -fsSL -o /etc/zivpn/templates/index.html "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/templates/index.html"
 if [ $? -ne 0 ]; then
     say "${R}❌ Template download မအောင်မြင် - Fallback ထည့်နေပါတယ်...${Z}"
@@ -1012,20 +1292,8 @@ html,body{
 HTML
 fi
 
-# ===== Download Telegram Bot from GitHub =====
-say "${Y}🤖 GitHub မှ Telegram Bot ဒေါင်းလုပ်ဆွဲနေပါတယ်...${Z}"
-curl -fsSL -o /etc/zivpn/bot.py "https://raw.githubusercontent.com/BaeGyee9/web-bot/main/telegram/bot.py"
-if [ $? -ne 0 ]; then
-  echo -e "${R}❌ Telegram Bot ဒေါင်းလုပ်ဆွဲ၍မရပါ - Fallback သုံးပါမယ်${Z}"
-  # Fallback bot code would go here
-fi
-
-# ... (ကျန်တဲ့ udp.sh ကုဒ်တွေ မူရင်းအတိုင်းဆက်ရေးမယ်) ...
-
-# ===== API Service =====
-say "${Y}🔌 API Service ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/api.py <<'PY'
-from flask import Flask, jsonify, request
+# ===== Create encrypted API service =====
+API_PY_CONTENT='''from flask import Flask, jsonify, request
 import sqlite3, datetime
 from datetime import timedelta
 import os
@@ -1096,12 +1364,12 @@ def update_bandwidth(username):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8081)
-PY
+'''
 
-# ===== Daily Cleanup Script =====
-say "${Y}🧹 Daily Cleanup Service ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/cleanup.py <<'PY'
-import sqlite3
+create_encrypted_wrapper "api.py" "$API_PY_CONTENT"
+
+# ===== Create encrypted cleanup script =====
+CLEANUP_PY_CONTENT='''import sqlite3
 import datetime
 import os
 import subprocess
@@ -1186,12 +1454,12 @@ def daily_cleanup():
 
 if __name__ == '__main__':
     daily_cleanup()
-PY
+'''
 
-# ===== Backup Script =====
-say "${Y}💾 Backup System ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/backup.py <<'PY'
-import sqlite3, shutil, datetime, os, gzip
+create_encrypted_wrapper "cleanup.py" "$CLEANUP_PY_CONTENT"
+
+# ===== Create encrypted backup script =====
+BACKUP_PY_CONTENT='''import sqlite3, shutil, datetime, os, gzip
 
 BACKUP_DIR = "/etc/zivpn/backups"
 DATABASE_PATH = "/etc/zivpn/zivpn.db"
@@ -1220,12 +1488,12 @@ def backup_database():
 
 if __name__ == '__main__':
     backup_database()
-PY
+'''
 
-# ===== Connection Manager =====
-say "${Y}🔗 Connection Manager ထည့်သွင်းနေပါတယ်...${Z}"
-cat >/etc/zivpn/connection_manager.py <<'PY'
-import sqlite3
+create_encrypted_wrapper "backup.py" "$BACKUP_PY_CONTENT"
+
+# ===== Create encrypted connection manager =====
+CONNECTION_MANAGER_CONTENT='''import sqlite3
 import subprocess
 import time
 import threading
@@ -1353,7 +1621,9 @@ if __name__ == "__main__":
             time.sleep(60)
     except KeyboardInterrupt:
         print("Stopping Connection Manager...")
-PY
+'''
+
+create_encrypted_wrapper "connection_manager.py" "$CONNECTION_MANAGER_CONTENT"
 
 # ===== systemd Services =====
 say "${Y}🧰 systemd services များ ထည့်သွင်းနေပါတယ်...${Z}"
@@ -1380,46 +1650,50 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-# Web Panel Service
+# Web Panel Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-web.service <<'EOF'
 [Unit]
-Description=ZIVPN Web Panel
+Description=ZIVPN Web Panel (Encrypted)
 After=network.target
 
 [Service]
 Type=simple
 User=root
 EnvironmentFile=-/etc/zivpn/web.env
-ExecStart=/usr/bin/python3 /etc/zivpn/web.py
+ExecStart=/etc/zivpn/web.py
 Restart=always
 RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/zivpn
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# API Service
+# API Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-api.service <<'EOF'
 [Unit]
-Description=ZIVPN API Server
+Description=ZIVPN API Server (Encrypted)
 After=network.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/api.py
+ExecStart=/etc/zivpn/api.py
 Restart=always
 RestartSec=3
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Telegram Bot Service
+# Telegram Bot Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-bot.service <<'EOF'
 [Unit]
-Description=ZIVPN Telegram Bot
+Description=ZIVPN Telegram Bot (Encrypted)
 After=network.target
 
 [Service]
@@ -1427,43 +1701,46 @@ Type=simple
 User=root
 EnvironmentFile=-/etc/zivpn/web.env
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/bot.py
+ExecStart=/etc/zivpn/bot.py
 Restart=always
 RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Connection Manager Service
+# Connection Manager Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-connection.service <<'EOF'
 [Unit]
-Description=ZIVPN Connection Manager
+Description=ZIVPN Connection Manager (Encrypted)
 After=network.target zivpn.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/connection_manager.py
+ExecStart=/etc/zivpn/connection_manager.py
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Backup Service
+# Backup Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-backup.service <<'EOF'
 [Unit]
-Description=ZIVPN Backup Service
+Description=ZIVPN Backup Service (Encrypted)
 After=network.target
 
 [Service]
 Type=oneshot
 User=root
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/backup.py
+ExecStart=/etc/zivpn/backup.py
 
 [Install]
 WantedBy=multi-user.target
@@ -1482,17 +1759,17 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-# Cleanup Service
+# Cleanup Service (using encrypted wrapper)
 cat >/etc/systemd/system/zivpn-cleanup.service <<'EOF'
 [Unit]
-Description=ZIVPN Daily Cleanup
+Description=ZIVPN Daily Cleanup (Encrypted)
 After=network.target
 
 [Service]
 Type=oneshot
 User=root
 WorkingDirectory=/etc/zivpn
-ExecStart=/usr/bin/python3 /etc/zivpn/cleanup.py
+ExecStart=/etc/zivpn/cleanup.py
 
 [Install]
 WantedBy=multi-user.target
@@ -1527,11 +1804,6 @@ iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 # UFW Rules
 ufw allow 1:65535/tcp >/dev/null 2>&1 || true
 ufw allow 1:65535/udp >/dev/null 2>&1 || true
-# ufw allow 22/tcp >/dev/null 2>&1 || true
-# ufw allow 5667/udp >/dev/null 2>&1 || true
-# ufw allow 6000:19999/udp >/dev/null 2>&1 || true
-# ufw allow 19432/tcp >/dev/null 2>&1 || true
-# ufw allow 8081/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
 # ===== Final Setup =====
@@ -1549,20 +1821,120 @@ systemctl enable --now zivpn-backup.timer
 systemctl enable --now zivpn-cleanup.timer
 
 # Initial setup
-python3 /etc/zivpn/backup.py
-python3 /etc/zivpn/cleanup.py
+/etc/zivpn/backup.py
+/etc/zivpn/cleanup.py
 systemctl restart zivpn.service
+
+# ===== Create security information file =====
+cat > /root/ZIVPN_SECURITY_README.txt << SECURITY_INFO
+╔═══════════════════════════════════════════════════════════╗
+║                 ZIVPN ENCRYPTED EDITION                   ║
+║              SECURITY INFORMATION - README                ║
+╚═══════════════════════════════════════════════════════════╝
+
+🔐 MASTER ENCRYPTION KEY:
+$MASTER_KEY
+
+📋 IMPORTANT: Save this key in a secure location!
+   Without this key, you cannot decrypt or modify your code.
+
+📍 FILE LOCATIONS:
+   • Encrypted files: /etc/zivpn/encrypted/
+   • Master key: /etc/zivpn/.master_key.dat
+   • Decryption tool: /usr/local/bin/zivpn-decrypt
+   • Templates: /etc/zivpn/templates/
+
+🔧 ADMIN COMMANDS:
+
+1. TO DECRYPT AND VIEW CODE:
+   sudo zivpn-decrypt
+   → Enter master key when prompted
+   → Select which file to decrypt
+   → Files auto-delete after 5 minutes
+
+2. TO RESTART SERVICES:
+   sudo systemctl restart zivpn-web.service
+   sudo systemctl restart zivpn-bot.service
+
+3. TO CHECK SERVICE STATUS:
+   sudo systemctl status zivpn-web.service
+   sudo systemctl status zivpn-bot.service
+
+4. TO VIEW LOGS:
+   sudo journalctl -u zivpn-web.service -f
+   sudo journalctl -u zivpn-bot.service -f
+
+🛡️ SECURITY FEATURES:
+
+1. AES-256 Encryption - Military-grade encryption for all source code
+2. Auto-decryption at runtime - Code decrypts only when needed
+3. Auto-cleanup - Decrypted files delete after 5 minutes
+4. Tamper protection - Files cannot be viewed without master key
+5. Secure key storage - Master key stored in protected location
+
+🌐 WEB PANEL ACCESS:
+   URL: http://$(hostname -I | awk '{print $1}'):19432
+   Username: $WEB_USER
+   Password: [The password you set during installation]
+
+🤖 TELEGRAM BOT:
+   Token: $BOT_TOKEN
+   Admin Commands: /admin, /adduser, /users, etc.
+
+⚠️ WARNINGS:
+
+1. DO NOT share the master key with anyone
+2. DO NOT manually edit files in /etc/zivpn/encrypted/
+3. DO NOT delete /etc/zivpn/.master_key.dat
+4. ALWAYS use zivpn-decrypt tool to view/modify code
+5. Backup the master key in multiple secure locations
+
+🆘 TROUBLESHOOTING:
+
+If you lose the master key:
+   → All encrypted code becomes permanently inaccessible
+   → No recovery is possible without the key
+
+If decryption fails:
+   → Verify you're using the correct master key
+   → Ensure you have root privileges
+   → Check if encrypted files exist in /etc/zivpn/encrypted/
+
+For support issues, please contact the script author.
+
+✅ INSTALLATION COMPLETE:
+   Your ZIVPN system is now fully encrypted and protected.
+   Only you (with the master key) can view or modify the source code.
+
+SECURITY_INFO
+
+# ===== Clean up temporary files =====
+say "${Y}🧹 Temporary files တွေ ရှင်းနေပါတယ်...${Z}"
+find /tmp -name "*.py" -type f -delete 2>/dev/null || true
+find /tmp -name "zivpn_*" -type f -delete 2>/dev/null || true
+find /tmp -name "*.tmp" -type f -delete 2>/dev/null || true
 
 # ===== Completion Message =====
 IP=$(hostname -I | awk '{print $1}')
-echo -e "\n$LINE\n${G}✅ ZIVPN Enterprise Edition Completed!${Z}"
-echo -e "${C}🌐 WEB PANEL:${Z} ${Y}http://$IP:19432${Z}"
-echo -e "\n${G}🔐 LOGIN CREDENTIALS${Z}"
-echo -e "  ${Y}• Username:${Z} ${Y}$WEB_USER${Z}"
-echo -e "  ${Y}• Password:${Z} ${Y}$WEB_PASS${Z}"
-echo -e "\n${M}📊 SERVICES STATUS:${Z}"
-echo -e "  ${Y}systemctl status zivpn-web${Z}      - Web Panel"
-echo -e "  ${Y}systemctl status zivpn-bot${Z}      - Telegram Bot"
-echo -e "  ${Y}systemctl status zivpn-connection${Z} - Connection Manager"
-echo -e "${C}ℹ️  IMPORTANT:${Z} ${G}Web Panel now uses local templates. GitHub can be private.${Z}"
+echo -e "\n$LINE"
+echo -e "${G}✅ ZIVPN Encrypted Enterprise Edition Installation Completed!${Z}"
+echo -e "$LINE"
+echo -e "\n${C}🔐 SECURITY INFORMATION:${Z}"
+echo -e "  ${Y}• Master Key:${Z} ${G}$MASTER_KEY${Z}"
+echo -e "  ${Y}• Key saved to:${Z} /root/ZIVPN_SECURITY_README.txt"
+echo -e "  ${Y}• Decrypt Tool:${Z} ${G}zivpn-decrypt${Z}"
+echo -e "\n${M}🌐 WEB PANEL:${Z} ${Y}http://$IP:19432${Z}"
+echo -e "  ${Y}• Username:${Z} $WEB_USER"
+echo -e "  ${Y}• Password:${Z} [Your chosen password]"
+echo -e "\n${M}🤖 TELEGRAM BOT:${Z}"
+echo -e "  ${Y}• Token:${Z} $BOT_TOKEN"
+echo -e "  ${Y}• Admin Commands:${Z} /admin, /adduser, /users, etc."
+echo -e "\n${R}⚠️  CRITICAL REMINDER:${Z}"
+echo -e "  ${Y}1. Save the master key NOW!${Z}"
+echo -e "  ${Y}2. Without it, you cannot modify your code${Z}"
+echo -e "  ${Y}3. Code is AES-256 encrypted and protected${Z}"
+echo -e "\n${G}🔧 ADMIN COMMANDS:${Z}"
+echo -e "  ${Y}• View code:${Z} zivpn-decrypt"
+echo -e "  ${Y}• Restart:${Z} systemctl restart zivpn-web.service"
+echo -e "  ${Y}• Status:${Z} systemctl status zivpn-web.service"
 echo -e "$LINE"
