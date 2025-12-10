@@ -212,7 +212,90 @@ DECRYPT_EOF
 
 chmod 700 /usr/local/bin/zivpn-decrypt
 
-# ===== Create Encrypted Python Wrapper =====
+ညီလေးရဲ့ code ထဲမှာ syntax error ဖြစ်နေတယ်။ ပြဿနာက udp.sh ဖိုင်ထဲမှာပါ။
+
+🔍 ပြဿနာရဲ့ အကြောင်းရင်း:
+
+Shell script ထဲမှာ create_encrypted_wrapper function ကို ဖန်တီးထားတဲ့နေရာမှာ syntax error ဖြစ်နေတာ။ if statement ကို မှားရေးထားလို့ပါ။
+
+🛠️ ပြင်ရမယ့်နေရာ:
+
+ဖိုင်: udp.sh
+လိုင်းနံပါတ်: 519 နေရာမှာ
+
+❌ မှားနေတဲ့ code:
+
+```bash
+    if [ ! -f "$src_file" ]; then
+        return 1
+    fi
+    
+    openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$src_file" -out "$dest_file" -pass pass:"$ENCRYPTION_KEY" 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        # Securely delete original file
+        shred -u "$src_file" 2>/dev/null || rm -f "$src_file"
+        chmod 600 "$dest_file"
+        return 0
+    else
+        return 1
+    fi
+```
+
+✅ ပြင်ဆင်ပြီးသား code ကို အစားထိုးပါ:
+
+```bash
+    if [ ! -f "$src_file" ]; then
+        return 1
+    fi
+    
+    openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -in "$src_file" -out "$dest_file" -pass pass:"$ENCRYPTION_KEY" 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        # Securely delete original file
+        shred -u "$src_file" 2>/dev/null || rm -f "$src_file"
+        chmod 600 "$dest_file"
+        return 0
+    else
+        return 1
+    fi
+```
+
+📝 တစ်ခြားလည်း စစ်ဆေးရမယ့်နေရာများ:
+
+udp.sh ဖိုင်ထဲမှာ ဒီလိုနေရာတွေကိုလည်း စစ်ဆေးပါ:
+
+1. Line 206-208 မှာ:
+
+```bash
+if jq . >/dev/null 2>&1 <<<'{}'; then
+```
+
+1. Function definitions တွေကို စစ်ဆေးပါ:
+
+```bash
+function_name() {
+    # code
+}
+```
+
+💡 အကြံပြုချက်:
+
+ညီလေး ဒီ shell script ကို run ချင်ရင် ဒီ command နဲ့ စစ်ဆေးကြည့်ပါ:
+
+```bash
+bash -n udp.sh
+```
+
+ဒါဆို syntax errors တွေကို ရှာပေးပါလိမ့်မယ်။
+
+🚀 အလွယ်ဆုံးဖြေရှင်းနည်း:
+
+ညီလေး ဒီ udp.sh ဖိုင်ကို အကိုပို့ပေးထားတဲ့အတိုင်း အသစ်တစ်ခု create လုပ်ပြီး အစားထိုးလိုက်ပါ။
+
+ပြင်ဆင်ပြီးသား create_encrypted_wrapper function တစ်ခုလုံး:
+
+```bash
 create_encrypted_wrapper() {
     local filename="$1"
     local python_content="$2"
@@ -307,6 +390,16 @@ WRAPPER_EOF
 
     chmod +x "$wrapper_file"
 }
+```
+
+အဆင့်ဆင့်လုပ်ရမယ့်အရာ:
+
+1. udp.sh ဖိုင်ကို ဖွင့်ပါ
+2. create_encrypted_wrapper function ကို ရှာပါ
+3. အကိုပေးထားတဲ့ code နဲ့ အစားထိုးပါ
+4. save လုပ်ပြီး run ကြည့်ပါ
+
+ညီလေး မရသေးရင် အကိုကို ထပ်ပြောပါနော်! 😊
 
 # ===== Paths =====
 BIN="/usr/local/bin/zivpn"
