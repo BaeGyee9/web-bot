@@ -1340,6 +1340,18 @@ function openEditExpiryModal(username, currentExpiry) {
         </div>
         
         <div class="form-group">
+            <label><i class="fas fa-calendar-check"></i> Expiry Action</label>
+            <div style="margin-bottom: 10px;">
+                <input type="radio" id="actionReset" name="expiryAction" value="reset" checked>
+                <label for="actionReset" style="margin-left: 5px;">Reset (Today to New Date)</label>
+            </div>
+            <div>
+                <input type="radio" id="actionRenew" name="expiryAction" value="renew">
+                <label for="actionRenew" style="margin-left: 5px;">Renew (Extend from Current Expiry)</label>
+            </div>
+        </div>
+        
+        <div class="form-group">
             <label><i class="fas fa-calendar-plus"></i> New Expiry Date</label>
             <input type="date" id="newExpiryDate" required style="width: 100%; padding: 10px; border: 1px solid var(--bd); border-radius: 4px;">
         </div>
@@ -1365,7 +1377,7 @@ function openEditExpiryModal(username, currentExpiry) {
     
     form.innerHTML = formHTML;
     
-    // Set tomorrow as default date
+    // Set tomorrow as default date for reset action
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
@@ -1389,6 +1401,7 @@ function setExpiryDays(days) {
 function saveExpiryChanges() {
     const username = document.getElementById('editUsername').value;
     const newExpiry = document.getElementById('newExpiryDate').value;
+    const actionType = document.querySelector('input[name="expiryAction"]:checked').value;
     
     if (!username || !newExpiry) {
         alert('Please fill in all fields');
@@ -1410,8 +1423,14 @@ function saveExpiryChanges() {
     expiryInput.name = 'expiry';
     expiryInput.value = newExpiry;
     
+    const actionInput = document.createElement('input');
+    actionInput.type = 'hidden';
+    actionInput.name = 'action_type';
+    actionInput.value = actionType;
+    
     form.appendChild(usernameInput);
     form.appendChild(expiryInput);
+    form.appendChild(actionInput);
     document.body.appendChild(form);
     
     form.submit();
