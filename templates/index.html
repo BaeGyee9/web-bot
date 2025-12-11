@@ -14,7 +14,18 @@
     --ok: #10b981; --bad: #ef4444; --unknown: #f59e0b; --expired: #8b5cf6;
     --success: #06d6a0; --delete-btn: #ef4444; --logout-btn: #f97316;
     --shadow: 0 10px 25px -5px rgba(0,0,0,0.3), 0 8px 10px -6px rgba(0,0,0,0.2);
-    --radius: 16px; --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --radius: 16px; 
+    
+    /* Updated: Rainbow Gradient - အရောင်မျိုးစုံ */
+    --gradient: linear-gradient(
+        135deg,
+        #667eea 0%,
+        #764ba2 20%,
+        #ec4899 40%,
+        #f97316 60%,
+        #84cc16 80%,
+        #06b6d4 100%
+    );
 }
 [data-theme='dark']{
     --bg: var(--bg-dark); --fg: var(--fg-dark); --card: var(--card-dark);
@@ -36,9 +47,11 @@ html,body{
     max-width:1400px;margin:auto;padding:20px;padding-bottom: 80px;
 }
 
-/* Modern Header */
+/* Modern Header - Rainbow Gradient */
 .header {
     background: var(--gradient);
+    background-size: 400% 400%;
+    animation: gradientFlow 10s ease infinite;
     padding: 25px 20px;
     margin-bottom: 25px;
     border-radius: var(--radius);
@@ -89,18 +102,43 @@ html,body{
 
 .header h1 {
     margin: 0;
-    font-size: 2.5em;
+    font-size: 2.8em;
     font-weight: 900;
     color: white;
-    text-shadow: 3px 3px 8px rgba(0,0,0,0.4);
+    text-shadow: 
+        3px 3px 6px rgba(0,0,0,0.4),
+        0 0 30px rgba(255,255,255,0.3);
     letter-spacing: 1.5px;
 }
 
 .header .subtitle {
-    color: rgba(255,255,255,0.9);
-    font-size: 1.1em;
+    color: rgba(255,255,255,0.95);
+    font-size: 1.2em;
     margin-top: 10px;
-    font-weight: 500;
+    font-weight: 600;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.header .subtitle span {
+    padding: 8px 18px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 30px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+}
+
+.header .subtitle span:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: translateY(-2px);
+}
+
+.header .subtitle i {
+    margin-right: 8px;
 }
 
 /* Bottom Navigation Bar */
@@ -767,22 +805,23 @@ tr:hover {
 {% else %}
 
 <div class="container">
-    <<!-- Modern Header -->
+    <!-- Modern Header - Rainbow Gradient -->
 <header class="header">
     <div class="header-content">
         <div class="logo-container">
             <img src="{{ logo }}" alt="ZIVPN" class="logo">
             <div style="text-align: left;">
-                <h1>မောင်သုည ZIVPN ENTERPRISE</h1>
-                <div class="subtitle" style="font-size: 1.1em; font-weight: 600; color: rgba(255,255,255,0.95); margin-top: 5px;">
-                    <i class="fas fa-bolt"></i> Premium VPN Management System
+                <h1>ZIVPN ENTERPRISE</h1>
+                <div class="subtitle" style="margin-top: 8px; font-size: 1.1em;">
+                    ⚡ Premium VPN Management System
                 </div>
             </div>
         </div>
-        <div class="subtitle" style="margin-top: 10px; display: flex; gap: 20px; justify-content: center;">
+        <div class="subtitle">
             <span><i class="fas fa-shield-alt"></i> Secure</span>
-            <span><i class="fas fa-rocket"></i> Fast</span>
+            <span><i class="fas fa-bolt"></i> Fast</span>
             <span><i class="fas fa-infinity"></i> Unlimited</span>
+            <span><i class="fas fa-globe-asia"></i> Global</span>
         </div>
     </div>
 </header>
