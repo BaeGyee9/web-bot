@@ -730,6 +730,7 @@ def edit_expiry():
     
     username = (request.form.get("username") or "").strip()
     new_expiry = (request.form.get("expiry") or "").strip()
+    action_type = (request.form.get("action_type") or "reset").strip()
     
     if not username or not new_expiry:
         return build_view(err=t['required_fields'])
@@ -744,13 +745,50 @@ def edit_expiry():
     db = get_db()
     try:
         # Check if user exists
-        user = db.execute('SELECT username FROM users WHERE username = ?', (username,)).fetchone()
+        user = db.execute('SELECT username, expires FROM users WHERE username = ?', (username,)).fetchone()
         if not user:
             return build_view(err=f"User '{username}' not found")
         
-        # Update expiry
-        db.execute('UPDATE users SET expires = ? WHERE username = ?', (new_expiry, username))
-        db.commit()
+        # Get current expiry
+        current_expiry = user['expires']
+        
+        # RENEW ACTION: Extend from current expiry
+        if action_type == "renew" and current_expiry:
+            try:
+                # Parse current expiry and add days from new date
+                current_date = datetime.strptime(current_expiry, "%Y-%m-%d")
+                new_date = datetime.strptime(new_expiry, "%Y-%m-%d")
+                
+                # Calculate days to add (difference between new_date and today)
+                today = datetime.now().date()
+                days_to_add = (new_date.date() - today).days
+                
+                if days_to_add > 0:
+                    # Add days to current expiry
+                    final_expiry = current_date + timedelta(days=days_to_add)
+                    final_expiry_str = final_expiry.strftime("%Y-%m-%d")
+                else:
+                    # If new date is before today, use new date directly
+                    final_expiry_str = new_expiry
+                
+                # Update with renewed expiry
+                db.execute('UPDATE users SET expires = ? WHERE username = ?', (final_expiry_str, username))
+                db.commit()
+                
+                msg = f"User '{username}' renewed from {current_expiry} to {final_expiry_str}"
+                
+            except Exception as e:
+                print(f"Renew calculation error: {e}")
+                # Fallback to direct update
+                db.execute('UPDATE users SET expires = ? WHERE username = ?', (new_expiry, username))
+                db.commit()
+                msg = f"User '{username}' expiry updated to {new_expiry}"
+        
+        # RESET ACTION: Set new date directly (default)
+        else:
+            db.execute('UPDATE users SET expires = ? WHERE username = ?', (new_expiry, username))
+            db.commit()
+            msg = f"User '{username}' expiry reset to {new_expiry}"
         
         # Also update billing table if exists
         try:
@@ -759,7 +797,7 @@ def edit_expiry():
         except:
             pass  # Ignore if billing table doesn't exist
         
-        return build_view(msg=f"User '{username}' expiry updated to {new_expiry}")
+        return build_view(msg=msg)
         
     except Exception as e:
         print(f"Error updating expiry: {e}")
