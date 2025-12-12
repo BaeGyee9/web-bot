@@ -1428,32 +1428,51 @@ function openEditExpiryModal(username, currentExpiry) {
         
         <div class="form-group">
             <label><i class="fas fa-calendar-check"></i> Expiry Action</label>
-            <div style="margin-bottom: 10px;">
-                <input type="radio" id="actionReset" name="expiryAction" value="reset" checked>
-                <label for="actionReset" style="margin-left: 5px;">Reset (Today to New Date)</label>
-            </div>
-            <div>
-                <input type="radio" id="actionRenew" name="expiryAction" value="renew">
-                <label for="actionRenew" style="margin-left: 5px;">Renew (Extend from Current Expiry)</label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 15px 0;">
+                <button type="button" 
+                        id="actionResetBtn" 
+                        class="action-select-btn active" 
+                        data-action="reset"
+                        onclick="selectExpiryAction('reset', this)">
+                    <i class="fas fa-redo"></i>
+                    <span>Reset Expiry</span>
+                    <small style="display: block; font-size: 0.8em; opacity: 0.8; margin-top: 5px;">From Today</small>
+                </button>
+                
+                <button type="button" 
+                        id="actionRenewBtn" 
+                        class="action-select-btn" 
+                        data-action="renew"
+                        onclick="selectExpiryAction('renew', this)">
+                    <i class="fas fa-calendar-plus"></i>
+                    <span>Renew Expiry</span>
+                    <small style="display: block; font-size: 0.8em; opacity: 0.8; margin-top: 5px;">Extend Current</small>
+                </button>
             </div>
         </div>
         
         <div class="form-group">
             <label><i class="fas fa-calendar-plus"></i> New Expiry Date</label>
-            <input type="date" id="newExpiryDate" required style="width: 100%; padding: 10px; border: 1px solid var(--bd); border-radius: 4px;">
+            <input type="date" id="newExpiryDate" required style="width: 100%; padding: 12px; border: 2px solid var(--bd); border-radius: var(--radius); background: var(--bg); color: var(--input-text);">
         </div>
         
         <div class="form-group">
             <label><i class="fas fa-bolt"></i> Quick Actions</label>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 5px;">
-                <button type="button" class="btn-edit" onclick="setExpiryDays(7)">+7 Days</button>
-                <button type="button" class="btn-edit" onclick="setExpiryDays(30)">+30 Days</button>
-                <button type="button" class="btn-edit" onclick="setExpiryDays(365)">+1 Year</button>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px;">
+                <button type="button" class="quick-action-btn" onclick="setExpiryDays(7)">
+                    <i class="fas fa-plus-circle"></i> +7 Days
+                </button>
+                <button type="button" class="quick-action-btn" onclick="setExpiryDays(30)">
+                    <i class="fas fa-plus-square"></i> +30 Days
+                </button>
+                <button type="button" class="quick-action-btn" onclick="setExpiryDays(365)">
+                    <i class="fas fa-calendar"></i> +1 Year
+                </button>
             </div>
         </div>
         
-        <div class="form-actions">
-            <button type="button" class="btn btn-primary" onclick="saveExpiryChanges()">
+        <div class="form-actions" style="display: flex; gap: 10px; margin-top: 20px;">
+            <button type="button" class="btn btn-primary" style="flex: 1;" onclick="saveExpiryChanges()">
                 <i class="fas fa-save"></i> Save Changes
             </button>
             <button type="button" class="btn btn-danger" onclick="closeEditExpiryModal()">
@@ -1463,6 +1482,15 @@ function openEditExpiryModal(username, currentExpiry) {
     `;
     
     form.innerHTML = formHTML;
+    
+    // Set tomorrow as default date for reset action
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    document.getElementById('newExpiryDate').value = tomorrowStr;
+    
+    modal.style.display = 'flex';
+}
     
     // Set tomorrow as default date for reset action
     const tomorrow = new Date();
@@ -1674,6 +1702,128 @@ document.addEventListener('DOMContentLoaded', () => {
 });
     
 // Close modals when clicking outside
+// Function to handle action selection
+function selectExpiryAction(actionType, button) {
+    // Remove active class from all buttons
+    document.querySelectorAll('.action-select-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Add active class to clicked button
+    button.classList.add('active');
+}
+
+// Modified saveExpiryChanges function
+function saveExpiryChanges() {
+    const username = document.getElementById('editUsername').value;
+    const newExpiry = document.getElementById('newExpiryDate').value;
+    const activeButton = document.querySelector('.action-select-btn.active');
+    const actionType = activeButton ? activeButton.getAttribute('data-action') : 'reset';
+    
+    if (!username || !newExpiry) {
+        alert('Please fill in all fields');
+        return;
+    }
+    
+    // Create form and submit
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/edit_expiry';
+    
+    const usernameInput = document.createElement('input');
+    usernameInput.type = 'hidden';
+    usernameInput.name = 'username';
+    usernameInput.value = username;
+    
+    const expiryInput = document.createElement('input');
+    expiryInput.type = 'hidden';
+    expiryInput.name = 'expiry';
+    expiryInput.value = newExpiry;
+    
+    const actionInput = document.createElement('input');
+    actionInput.type = 'hidden';
+    actionInput.name = 'action_type';
+    actionInput.value = actionType;
+    
+    form.appendChild(usernameInput);
+    form.appendChild(expiryInput);
+    form.appendChild(actionInput);
+    document.body.appendChild(form);
+    
+    form.submit();
+}
+
+// Modified setExpiryDays function for better UX
+function setExpiryDays(days) {
+    const dateInput = document.getElementById('newExpiryDate');
+    const activeButton = document.querySelector('.action-select-btn.active');
+    const actionType = activeButton ? activeButton.getAttribute('data-action') : 'reset';
+    
+    let newDate;
+    
+    if (actionType === 'renew') {
+        // For renew, we need to get current expiry from the display
+        // Try different selectors to find the current expiry field
+        const currentExpiryElements = document.querySelectorAll('input[readonly].password-text');
+        let currentExpiryText = '';
+        
+        if (currentExpiryElements.length >= 2) {
+            // Second readonly input should be the current expiry
+            currentExpiryText = currentExpiryElements[1].value;
+        }
+        
+        if (currentExpiryText && currentExpiryText !== 'Never' && currentExpiryText.length === 10) {
+            try {
+                const currentDate = new Date(currentExpiryText);
+                if (!isNaN(currentDate.getTime())) {
+                    newDate = new Date(currentDate);
+                    newDate.setDate(newDate.getDate() + days);
+                } else {
+                    throw new Error('Invalid date');
+                }
+            } catch (e) {
+                // Fallback to today if date parsing fails
+                newDate = new Date();
+                newDate.setDate(newDate.getDate() + days);
+            }
+        } else {
+            // If no current expiry, fallback to today
+            newDate = new Date();
+            newDate.setDate(newDate.getDate() + days);
+        }
+    } else {
+        // For reset, always calculate from today
+        newDate = new Date();
+        newDate.setDate(newDate.getDate() + days);
+    }
+    
+    const formattedDate = newDate.toISOString().split('T')[0];
+    dateInput.value = formattedDate;
+    
+    // Show a small notification
+    const quickBtn = event.target.closest('.quick-action-btn');
+    if (quickBtn) {
+        const originalHTML = quickBtn.innerHTML;
+        const originalStyle = {
+            background: quickBtn.style.background,
+            color: quickBtn.style.color,
+            borderColor: quickBtn.style.borderColor
+        };
+        
+        quickBtn.innerHTML = '<i class="fas fa-check"></i> Applied!';
+        quickBtn.style.background = 'var(--success)';
+        quickBtn.style.color = 'white';
+        quickBtn.style.borderColor = 'var(--success)';
+        
+        setTimeout(() => {
+            quickBtn.innerHTML = originalHTML;
+            quickBtn.style.background = originalStyle.background;
+            quickBtn.style.color = originalStyle.color;
+            quickBtn.style.borderColor = originalStyle.borderColor;
+        }, 1000);
+    }
+}
+
 window.onclick = function(event) {
     const modal = document.getElementById('settingsModal');
     const editModal = document.getElementById('editExpiryModal');
