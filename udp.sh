@@ -722,12 +722,18 @@ def add_user():
     return build_view(msg=t['success_save'])
 
 # NEW: Edit expiry route
-@app.route("/edit_expiry", methods=["POST"])
+@app.route("/edit_expiry", methods=["GET", "POST"])  # ✨ ဒီမှာ GET ထည့်လိုက်
 def edit_expiry():
     t = g.t
     if not require_login(): 
         return redirect(url_for('login'))
     
+    # Handle GET request (when user accesses directly via URL)
+    if request.method == "GET":
+        # Just redirect to main page
+        return redirect(url_for('index'))
+    
+    # Handle POST request (form submission)
     username = (request.form.get("username") or "").strip()
     new_expiry = (request.form.get("expiry") or "").strip()
     action_type = (request.form.get("action_type") or "reset").strip()
